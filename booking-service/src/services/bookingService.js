@@ -1,12 +1,8 @@
-const axios = require('axios');
 const db = require('../models/db');
 const redis = require('../models/redis');
 
 async function createBooking(data) {
   const { space_id, user_id, start_time, end_time } = data;
-
-  // Verify that space exists from listing service.
-  await axios.get(`${process.env.LISTING_SERVICE_URL}/spaces/${space_id}`);
 
   // Prevent overlapping bookings.
   const overlap = await db.query(

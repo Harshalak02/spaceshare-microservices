@@ -1,12 +1,13 @@
 function SpaceList({ spaces, onBook }) {
+  if (!spaces || spaces.length === 0) return null;
+
   return (
     <div>
-      <h3>Results</h3>
-      {spaces.length === 0 && <p>No spaces found.</p>}
+      <h3>Results ({spaces.length} spaces found)</h3>
       {spaces.map((id) => (
-        <div key={id} style={{ border: '1px solid #ccc', padding: 8, margin: '8px 0' }}>
-          <p>Space ID: {id}</p>
-          <button onClick={() => onBook(id)}>Book</button>
+        <div key={id} style={{ border: '1px solid #ccc', padding: 12, margin: '8px 0', borderRadius: 4 }}>
+          <p><strong>Space ID:</strong> {id}</p>
+          <button onClick={() => onBook(id)} style={{ padding: '4px 12px' }}>📅 Book</button>
         </div>
       ))}
     </div>

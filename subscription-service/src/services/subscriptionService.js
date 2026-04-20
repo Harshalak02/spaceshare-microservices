@@ -16,4 +16,12 @@ async function getByUser(userId) {
   return result.rows[0] || null;
 }
 
-module.exports = { subscribe, getByUser };
+async function isHostActive(userId) {
+  const result = await db.query(
+    'SELECT * FROM subscriptions WHERE user_id = $1 AND expiry_date > NOW() ORDER BY created_at DESC LIMIT 1',
+    [userId]
+  );
+  return result.rows.length > 0;
+}
+
+module.exports = { subscribe, getByUser, isHostActive };

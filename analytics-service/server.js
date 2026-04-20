@@ -6,6 +6,9 @@ const { logEvent } = require('./src/services/analyticsService');
 const PORT = process.env.PORT || 4007;
 const subscriber = new Redis(process.env.REDIS_URL);
 
+subscriber.on('connect', () => console.log('✅ [analytics-service] Redis connected'));
+subscriber.on('error', (err) => console.error('❌ [analytics-service] Redis error:', err.message));
+
 subscriber.subscribe('events', () => {
   console.log('Analytics service subscribed to events');
 });

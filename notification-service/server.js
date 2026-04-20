@@ -6,6 +6,9 @@ const { handleEvent } = require('./src/services/notificationService');
 const PORT = process.env.PORT || 4006;
 const subscriber = new Redis(process.env.REDIS_URL);
 
+subscriber.on('connect', () => console.log('✅ [notification-service] Redis connected'));
+subscriber.on('error', (err) => console.error('❌ [notification-service] Redis error:', err.message));
+
 subscriber.subscribe('events', () => {
   console.log('Notification service subscribed to events');
 });

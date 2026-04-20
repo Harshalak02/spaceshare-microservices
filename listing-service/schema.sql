@@ -1,21 +1,22 @@
 CREATE TABLE IF NOT EXISTS spaces (
   id SERIAL PRIMARY KEY,
-  title VARCHAR(255) NOT NULL,
-  lat NUMERIC NOT NULL,
-  lon NUMERIC NOT NULL,
-  price_per_hour NUMERIC NOT NULL,
-  capacity INT NOT NULL,
-  owner_id INT NOT NULL,
-  created_at TIMESTAMP DEFAULT NOW()
+  title TEXT NOT NULL,
+  description TEXT,
+  location_name TEXT,
+  lat DOUBLE PRECISION,
+  lon DOUBLE PRECISION,
+  price_per_hour NUMERIC,
+  capacity INT,
+  owner_id INT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS amenities (
-  id SERIAL PRIMARY KEY,
-  name VARCHAR(100) UNIQUE NOT NULL
-);
+-- Add columns if upgrading from old schema
+ALTER TABLE spaces ADD COLUMN IF NOT EXISTS location_name TEXT;
+ALTER TABLE spaces ADD COLUMN IF NOT EXISTS description TEXT;
 
-CREATE TABLE IF NOT EXISTS space_amenities (
-  space_id INT REFERENCES spaces(id) ON DELETE CASCADE,
-  amenity_id INT REFERENCES amenities(id) ON DELETE CASCADE,
-  PRIMARY KEY(space_id, amenity_id)
-);
+-- Ensure lat/lon are correct type
+ALTER TABLE spaces ALTER COLUMN lat TYPE DOUBLE PRECISION USING lat::DOUBLE PRECISION;
+ALTER TABLE spaces ALTER COLUMN lon TYPE DOUBLE PRECISION USING lon::DOUBLE PRECISION;
+
+CREATE INDEX IF NOT EXISTS idx_spaces_lat_lon ON spaces(lat, lon);

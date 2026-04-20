@@ -10,9 +10,22 @@ async function create(req, res) {
 }
 
 async function get(req, res) {
-  const sub = await service.getByUser(req.params.user_id);
-  if (!sub) return res.status(404).json({ message: 'Subscription not found' });
-  res.json(sub);
+  try {
+    const sub = await service.getByUser(req.params.user_id);
+    if (!sub) return res.status(404).json({ message: 'Subscription not found' });
+    res.json(sub);
+  } catch (error) {
+    res.status(500).json({ message: 'Failed to get subscription', error: error.message });
+  }
 }
 
-module.exports = { create, get };
+async function checkActive(req, res) {
+  try {
+    const active = await service.isHostActive(req.params.user_id);
+    res.json({ active });
+  } catch (error) {
+    res.status(500).json({ message: 'Check failed', error: error.message });
+  }
+}
+
+module.exports = { create, get, checkActive };
