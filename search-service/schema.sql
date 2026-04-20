@@ -1,0 +1,8 @@
+CREATE TABLE IF NOT EXISTS spaces (
+  id INT PRIMARY KEY,
+  title VARCHAR(255),
+  lat NUMERIC NOT NULL,
+  lon NUMERIC NOT NULL,
+  price_per_hour NUMERIC NOT NULL,
+  capacity INT NOT NULL
+);

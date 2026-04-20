@@ -1,48 +1,29 @@
-# SpaceShare Microservices System — Implementation README (Node.js)
+# SpaceShare Microservices (Node.js + React)
 
-## 1. Overview
+This repository contains a complete beginner-friendly microservices system for a co-working space marketplace.
 
-This project implements a **microservices-based backend** for a co-working space booking platform.
+## Tech Stack
+- Backend services: Node.js + Express
+- Databases: PostgreSQL (`pg`)
+- Cache/events: Redis (`ioredis`)
+- Auth: JWT + bcrypt
+- Frontend: React + Vite
 
-Each service:
+## Implemented Services
+- API Gateway (`4000`)
+- Auth Service (`4001`)
+- Listing Service (`4002`)
+- Search Service (`4003`)
+- Booking Service (`4004`)
+- Subscription Service (`4005`)
+- Notification Service (`4006`)
+- Analytics Service (`4007`)
+- Frontend (`5173`)
 
-* Runs independently
-* Has its own database
-* Communicates via REST APIs
-* Uses Redis for caching and messaging
-
----
-
-## 2. Architecture
-
-### Services
-
-* **API Gateway**
-* **Auth Service**
-* **Listing Service**
-* **Search Service**
-* **Booking Service**
-* **Subscription Service**
-* **Notification Service**
-* **Analytics Service**
-
----
-
-## 3. Tech Stack
-
-* Node.js (Express.js)
-* PostgreSQL (per service DB)
-* Redis (caching + pub/sub)
-
-* JWT (authentication)
-
----
-
-## 4. Folder Structure
+## Folder Structure
 
 ```
-project-root/
-│
+.
 ├── api-gateway/
 ├── auth-service/
 ├── listing-service/
@@ -51,370 +32,148 @@ project-root/
 ├── subscription-service/
 ├── notification-service/
 ├── analytics-service/
-
-└── README.md
+└── frontend/
 ```
 
----
-
-## 5. API Gateway
-
-### Responsibilities:
-
-* Route requests
-* Handle authentication middleware
-* Forward requests to services
-
-### Routes:
+Each backend service follows:
 
 ```
-/api/auth → auth-service
-/api/listings → listing-service
-/api/search → search-service
-/api/bookings → booking-service
-/api/subscriptions → subscription-service
+service/
+├── src/
+│   ├── controllers/
+│   ├── routes/
+│   ├── services/
+│   ├── models/
+│   └── app.js
+├── server.js
+├── package.json
+├── .env.example
+└── schema.sql
 ```
 
----
+## Key Behaviors
 
-## 6. Auth Service
+### API Gateway
+Routes client requests to internal services:
+- `/api/auth/*`
+- `/api/listings/*`
+- `/api/search/*`
+- `/api/bookings/*`
+- `/api/subscriptions/*`
 
-### Features:
+### Auth Service
+- Register/login endpoints
+- Password hashing via bcrypt
+- JWT generation and token validation
 
-* Register/Login
-* JWT generation & validation
+### Listing Service
+- Space CRUD
+- Amenities mapping table
 
-### Endpoints:
+### Search Service
+- Bounding box search on `lat/lon`
+- Filters: price range + minimum capacity
+- Redis cache storing only `space_ids`
+- TTL configurable (`CACHE_TTL_SECONDS`, default 300s)
 
-```
-POST /register
-POST /login
-GET /validate-token
-```
+### Booking Service
+- Create bookings
+- Prevent overlapping (double) booking
+- Checks Listing Service for space existence
+- Emits `BOOKING_CONFIRMED` to Redis pub/sub (`events` channel)
 
-### DB Schema:
+### Subscription Service
+- Mock plan subscription
+- 30-day expiration simulation
 
-```
-users:
-- id
-- email
-- password_hash
-- role (host/guest/admin)
-```
+### Notification Service
+- Subscribes to `events`
+- Logs mock notification for `BOOKING_CONFIRMED` and `SUBSCRIPTION_EXPIRED`
 
----
+### Analytics Service
+- Subscribes to `events`
+- Persists events in PostgreSQL table
 
-## 7. Listing Service
+## SQL Setup
+Every service includes `schema.sql`. Create one PostgreSQL DB per service and run matching schema file.
 
-### Features:
-
-* Create/edit/delete spaces
-* Manage amenities
-
-### Endpoints:
-
-```
-POST /spaces
-GET /spaces/:id
-PUT /spaces/:id
-DELETE /spaces/:id
-```
-
-### DB Schema:
-
-```
-spaces:
-- id
-- title
-- lat
-- lon
-- price_per_hour
-- capacity
-- owner_id
-
-amenities:
-- id
-- name
-
-space_amenities:
-- space_id
-- amenity_id
+Example:
+```bash
+createdb auth_db
+psql auth_db < auth-service/schema.sql
 ```
 
----
+Do similarly for:
+- `listing_db`
+- `search_db`
+- `booking_db`
+- `subscription_db`
+- `analytics_db`
 
-## 8. Search Service (IMPORTANT)
+> Notification and API Gateway are stateless (their schema file contains comments only).
 
-### Features:
+## Environment Variables
+Copy each `.env.example` to `.env` and adjust values.
 
-* Geo-based search
-* Filtering
-* Redis caching
-
----
-
-### Flow:
-
-1. Check Redis cache
-2. If hit → return results
-3. If miss → query DB → cache result
-
----
-
-### Cache Key Format:
-
-```
-search:lat:<lat>:lon:<lon>:radius:<r>:price:<range>:capacity:<cap>
+Example:
+```bash
+cp auth-service/.env.example auth-service/.env
 ```
 
----
+Redis default: `redis://localhost:6379`
 
-### Cache Value:
+## Run Locally (No Docker)
 
-```
-[space_id1, space_id2, ...]
-```
+### 1) Start infrastructure
+- Start PostgreSQL
+- Start Redis
 
----
+### 2) Install dependencies and run each backend service
+Open separate terminals:
 
-### DB Query Logic:
-
-```
-WHERE lat BETWEEN min_lat AND max_lat
-AND lon BETWEEN min_lon AND max_lon
-AND price_per_hour BETWEEN X AND Y
-AND capacity >= N
-```
-
----
-
-### TTL:
-
-* Search cache: 5–10 min
-
----
-
-## 9. Booking Service
-
-### Features:
-
-* Book slots
-* Prevent double booking
-
----
-
-### Endpoints:
-
-```
-POST /book
-GET /bookings/:user_id
+```bash
+cd auth-service && npm install && npm run dev
+cd listing-service && npm install && npm run dev
+cd search-service && npm install && npm run dev
+cd booking-service && npm install && npm run dev
+cd subscription-service && npm install && npm run dev
+cd notification-service && npm install && npm run dev
+cd analytics-service && npm install && npm run dev
+cd api-gateway && npm install && npm run dev
 ```
 
----
-
-### Flow:
-
-1. Call Listing Service → check availability
-2. Validate slot
-3. Insert booking
-4. Emit event: BOOKING_CONFIRMED
-
----
-
-### DB Schema:
-
-```
-bookings:
-- id
-- space_id
-- user_id
-- start_time
-- end_time
-```
-
----
-
-## 10. Subscription Service
-
-### Features:
-
-* Manage host subscriptions
-* Stripe integration (mock initially)
-
----
-
-### Endpoints:
-
-```
-POST /subscribe
-GET /subscription/:user_id
-```
-
----
-
-### DB Schema:
-
-```
-subscriptions:
-- id
-- user_id
-- plan_type
-- expiry_date
-```
-
----
-
-## 11. Notification Service
-
-### Features:
-
-* Listen to events
-* Send emails (mock)
-
----
-
-### Events:
-
-```
-BOOKING_CONFIRMED
-SUBSCRIPTION_EXPIRED
-```
-
----
-
-## 12. Analytics Service
-
-### Features:
-
-* Log events
-* Track usage
-
----
-
-### Events:
-
-```
-SEARCH_PERFORMED
-BOOKING_CREATED
-```
-
----
-
-## 13. Redis Usage
-
-### 1. Caching
-
-* Search results
-* Space metadata (optional)
-
----
-
-### 2. Pub/Sub (events)
-
-```
-booking-service → publish → BOOKING_CONFIRMED
-notification-service → subscribe
-analytics-service → subscribe
-```
-
----
-
-## 14. Service Communication
-
-### Sync (REST)
-
-* Booking → Listing (availability)
-* Booking → Subscription (validation)
-
----
-
-### Async (Redis Pub/Sub)
-
-* Booking → Notification
-* Booking → Analytics
-
----
-
-## 15. Environment Variables
-
-Each service should have:
-
-```
-PORT=
-DB_URL=
-REDIS_URL=
-JWT_SECRET=
-SERVICE_URLS=
-```
-
----
-
-## 16. Running the System
-
-### Step 1:
-
-Start PostgreSQL and Redis
-
----
-
-### Step 2:
-
-Run each service:
-
-```
-cd auth-service
+### 3) Run frontend
+```bash
+cd frontend
 npm install
 npm run dev
 ```
 
-Repeat for all services
+Open `http://localhost:5173`.
 
----
+## Frontend Flow
+1. Register a user
+2. Login
+3. Search spaces (via API Gateway only)
+4. Click Book to create booking request (via API Gateway)
 
-### Step 3:
+## Example API Calls via Gateway
+```bash
+# Register
+curl -X POST http://localhost:4000/api/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"demo@test.com","password":"123456"}'
 
-Start API Gateway
+# Login
+curl -X POST http://localhost:4000/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"demo@test.com","password":"123456"}'
 
----
+# Search
+curl 'http://localhost:4000/api/search?lat=37.7&lon=-122.4&radius=0.1&min_price=0&max_price=300&capacity=2'
+```
 
-
-## 18. Key Design Decisions
-
-* Each service owns its data
-* Redis used as centralized cache
-* Hybrid caching strategy
-* API Gateway for routing
-* Event-driven async processing
-
----
-
-## 19. Future Improvements
-
-* Add message broker (Kafka/RabbitMQ)
-* Use PostGIS for geo queries
-* Add rate limiting
-* Add distributed tracing
-
----
-
-## 20. Final Notes for Codex
-
-* Use Express.js for all services
-* Use Sequelize or Prisma for DB
-* Use ioredis for Redis
-* Follow REST conventions
-* Keep services independent
-
----
-
-## 21. Summary
-
-This system is:
-
-* Scalable
-* Modular
-* Cache-optimized
-* Event-driven
-
-Each service is independently deployable and communicates through well-defined APIs and shared Redis infrastructure.
-
+## Notes
+- Services are intentionally simple and beginner-friendly.
+- All business logic uses async/await.
+- Comments are included in core logic files to explain important decisions.
