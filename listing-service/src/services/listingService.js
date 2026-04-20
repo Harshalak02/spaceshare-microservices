@@ -1,4 +1,17 @@
 const db = require('../models/db');
+const redis = require('../models/redis');
+
+async function publishListingEvent(type, payload) {
+  try {
+    await redis.publish('events', JSON.stringify({
+      type,
+      timestamp: new Date().toISOString(),
+      payload
+    }));
+  } catch (error) {
+    console.error(`❌ [listing-service] Failed to publish ${type}:`, error.message);
+  }
+}
 
 async function createSpace(data) {
   const { title, description, location_name, lat, lon, price_per_hour, capacity, owner_id } = data;
@@ -7,7 +20,9 @@ async function createSpace(data) {
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
     [title, description || '', location_name || '', lat, lon, price_per_hour, capacity, owner_id]
   );
-  return result.rows[0];
+  const space = result.rows[0];
+  await publishListingEvent('LISTING_CREATED', { space });
+  return space;
 }
 
 async function getSpace(id) {
@@ -32,11 +47,16 @@ async function updateSpace(id, data) {
      WHERE id=$8 RETURNING *`,
     [title, description || '', location_name || '', lat, lon, price_per_hour, capacity, id]
   );
-  return result.rows[0];
+  const space = result.rows[0];
+  if (space) {
+    await publishListingEvent('LISTING_UPDATED', { space });
+  }
+  return space;
 }
 
 async function deleteSpace(id) {
   await db.query('DELETE FROM spaces WHERE id=$1', [id]);
+  await publishListingEvent('LISTING_DELETED', { id: Number(id) });
 }
 
 module.exports = { createSpace, getSpace, getAllSpaces, getSpacesByOwner, updateSpace, deleteSpace };
