@@ -1,0 +1,1 @@
+-- Notification service currently does not require a database schema.

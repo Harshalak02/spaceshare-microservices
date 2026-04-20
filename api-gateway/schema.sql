@@ -1,0 +1,1 @@
+-- API gateway has no dedicated database schema.
