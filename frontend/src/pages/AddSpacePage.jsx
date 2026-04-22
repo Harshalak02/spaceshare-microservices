@@ -1,88 +1,168 @@
 import { useState } from 'react';
 import { apiRequest } from '../services/api';
 
-function AddSpacePage({ token, onBack }) {
-    const [form, setForm] = useState({
-        title: '',
-        description: '',
-        location_name: '',
-        lat: '',
-        lon: '',
-        price_per_hour: '',
-        capacity: ''
-    });
-    const [message, setMessage] = useState('');
-    const [geocoding, setGeocoding] = useState(false);
+const initialForm = {
+    title: '',
+    description: '',
+    location_name: '',
+    lat: '',
+    lon: '',
+    price_per_hour: '',
+    capacity: '',
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+};
 
-    function handleChange(e) {
-        setForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
+function AddSpacePage({ token }) {
+    const [form, setForm] = useState(initialForm);
+    const [geocodeBusy, setGeocodeBusy] = useState(false);
+    const [submitBusy, setSubmitBusy] = useState(false);
+    const [notice, setNotice] = useState({ type: '', text: '' });
+
+    function updateForm(event) {
+        const { name, value } = event.target;
+        setForm((prev) => ({ ...prev, [name]: value }));
     }
 
     async function geocodeLocation() {
-        if (!form.location_name) return;
-        setGeocoding(true);
+        if (!form.location_name.trim()) {
+            setNotice({ type: 'info', text: 'Enter a location name to fetch coordinates.' });
+            return;
+        }
+
+        setGeocodeBusy(true);
+        setNotice({ type: '', text: '' });
         try {
-            const encoded = encodeURIComponent(form.location_name);
-            const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encoded}&format=json&limit=1`);
-            const data = await res.json();
-            if (data && data.length > 0) {
-                setForm(prev => ({ ...prev, lat: data[0].lat, lon: data[0].lon }));
-                setMessage(`📍 Found: ${data[0].display_name}`);
+            const encoded = encodeURIComponent(form.location_name.trim());
+            const response = await fetch(`https://nominatim.openstreetmap.org/search?q=${encoded}&format=json&limit=1`);
+            const data = await response.json();
+
+            if (!Array.isArray(data) || data.length === 0) {
+                setNotice({ type: 'info', text: 'No matching location found. Please enter coordinates manually.' });
             } else {
-                setMessage('Location not found. Please enter lat/lon manually.');
+                setForm((prev) => ({
+                    ...prev,
+                    lat: data[0].lat,
+                    lon: data[0].lon
+                }));
+                setNotice({ type: 'success', text: `Coordinates loaded for ${data[0].display_name}.` });
             }
-        } catch (err) {
-            setMessage('Geocoding failed: ' + err.message);
+        } catch (error) {
+            setNotice({ type: 'error', text: `Geocoding failed: ${error.message}` });
+        } finally {
+            setGeocodeBusy(false);
         }
-        setGeocoding(false);
     }
 
-    async function handleSubmit(e) {
-        e.preventDefault();
-        setMessage('');
+    async function handleSubmit(event) {
+        event.preventDefault();
+        setSubmitBusy(true);
+        setNotice({ type: '', text: '' });
+
         try {
-            await apiRequest('/listings/spaces', 'POST', {
-                title: form.title,
-                description: form.description,
-                location_name: form.location_name,
-                lat: parseFloat(form.lat),
-                lon: parseFloat(form.lon),
-                price_per_hour: parseFloat(form.price_per_hour),
-                capacity: parseInt(form.capacity)
-            }, token);
-            setMessage('✅ Space created successfully!');
-            setForm({ title: '', description: '', location_name: '', lat: '', lon: '', price_per_hour: '', capacity: '' });
-        } catch (err) {
-            setMessage('❌ ' + err.message);
+            await apiRequest('/listings/spaces', {
+                method: 'POST',
+                token,
+                body: {
+                    title: form.title,
+                    description: form.description,
+                    location_name: form.location_name,
+                    lat: Number(form.lat),
+                    lon: Number(form.lon),
+                    price_per_hour: Number(form.price_per_hour),
+                    capacity: Number(form.capacity),
+                    timezone: form.timezone || 'UTC'
+                }
+            });
+
+            setNotice({ type: 'success', text: 'Listing created successfully.' });
+            setForm(initialForm);
+        } catch (error) {
+            setNotice({ type: 'error', text: `Unable to create listing: ${error.message}` });
+        } finally {
+            setSubmitBusy(false);
         }
     }
-
-    const inputStyle = { padding: 8, marginBottom: 8, width: '100%', boxSizing: 'border-box' };
 
     return (
-        <div>
-            <button onClick={onBack} style={{ marginBottom: 16 }}>← Back</button>
-            <h2>Add New Space</h2>
-            {message && <p>{message}</p>}
-            <form onSubmit={handleSubmit}>
-                <input name="title" placeholder="Title *" value={form.title} onChange={handleChange} style={inputStyle} required />
-                <textarea name="description" placeholder="Description" value={form.description} onChange={handleChange} style={{ ...inputStyle, height: 80 }} />
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-                    <input name="location_name" placeholder="Location (e.g. Bangalore, Indiranagar)" value={form.location_name} onChange={handleChange} style={{ ...inputStyle, flex: 1, marginBottom: 0 }} />
-                    <button type="button" onClick={geocodeLocation} disabled={geocoding} style={{ padding: '8px 16px', whiteSpace: 'nowrap' }}>
-                        {geocoding ? '...' : '📍 Get Coords'}
-                    </button>
-                </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                    <input name="lat" placeholder="Latitude *" value={form.lat} onChange={handleChange} style={inputStyle} required />
-                    <input name="lon" placeholder="Longitude *" value={form.lon} onChange={handleChange} style={inputStyle} required />
-                </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                    <input name="price_per_hour" placeholder="Price/Hour *" type="number" min="1" value={form.price_per_hour} onChange={handleChange} style={inputStyle} required />
-                    <input name="capacity" placeholder="Capacity *" type="number" min="1" value={form.capacity} onChange={handleChange} style={inputStyle} required />
-                </div>
-                <button type="submit" style={{ padding: '10px 24px', marginTop: 8 }}>Create Space</button>
-            </form>
+        <div className="stack fade">
+            <div className="hero-strip">
+                <h2>Create a New Listing</h2>
+                <p>Define location, pricing, and timezone to start accepting bookings.</p>
+            </div>
+
+            <section className="card">
+                <form className="stack" onSubmit={handleSubmit}>
+                    <div className="grid-2">
+                        <div className="field">
+                            <label htmlFor="title">Title</label>
+                            <input id="title" name="title" value={form.title} onChange={updateForm} required />
+                        </div>
+                        <div className="field">
+                            <label htmlFor="timezone">Timezone</label>
+                            <input id="timezone" name="timezone" value={form.timezone} onChange={updateForm} required />
+                        </div>
+                    </div>
+
+                    <div className="field">
+                        <label htmlFor="description">Description</label>
+                        <textarea id="description" name="description" value={form.description} onChange={updateForm} />
+                    </div>
+
+                    <div className="grid-2">
+                        <div className="field">
+                            <label htmlFor="location_name">Location Name</label>
+                            <input
+                                id="location_name"
+                                name="location_name"
+                                value={form.location_name}
+                                onChange={updateForm}
+                                placeholder="e.g. Hyderabad, Financial District"
+                            />
+                        </div>
+                        <div className="btn-row" style={{ alignItems: 'end' }}>
+                            <button className="btn btn-muted" type="button" onClick={geocodeLocation} disabled={geocodeBusy}>
+                                {geocodeBusy ? 'Looking up...' : 'Get Coordinates'}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="grid-3">
+                        <div className="field">
+                            <label htmlFor="lat">Latitude</label>
+                            <input id="lat" name="lat" value={form.lat} onChange={updateForm} required />
+                        </div>
+                        <div className="field">
+                            <label htmlFor="lon">Longitude</label>
+                            <input id="lon" name="lon" value={form.lon} onChange={updateForm} required />
+                        </div>
+                        <div className="field">
+                            <label htmlFor="capacity">Capacity</label>
+                            <input id="capacity" name="capacity" type="number" min="1" value={form.capacity} onChange={updateForm} required />
+                        </div>
+                        <div className="field">
+                            <label htmlFor="price_per_hour">Price per Hour</label>
+                            <input
+                                id="price_per_hour"
+                                name="price_per_hour"
+                                type="number"
+                                min="1"
+                                step="0.01"
+                                value={form.price_per_hour}
+                                onChange={updateForm}
+                                required
+                            />
+                        </div>
+                    </div>
+
+                    <div className="btn-row">
+                        <button className="btn btn-primary" type="submit" disabled={submitBusy}>
+                            {submitBusy ? 'Creating...' : 'Create Listing'}
+                        </button>
+                    </div>
+                </form>
+
+                {notice.text ? <div className={`notice ${notice.type || 'info'}`} style={{ marginTop: '0.75rem' }}>{notice.text}</div> : null}
+            </section>
         </div>
     );
 }

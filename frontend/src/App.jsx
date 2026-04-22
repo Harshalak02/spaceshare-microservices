@@ -1,55 +1,126 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import AuthPage from './pages/AuthPage';
 import SearchPage from './pages/SearchPage';
 import AddSpacePage from './pages/AddSpacePage';
 import MyListingsPage from './pages/MyListingsPage';
 import MyBookingsPage from './pages/MyBookingsPage';
+import HostBookingsPage from './pages/HostBookingsPage';
+import SubscriptionPage from './pages/SubscriptionPage';
+
+const AUTH_STORAGE_KEY = 'spaceshare-auth-v1';
+
+function getStoredAuth() {
+  try {
+    const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.token || !parsed?.user) return null;
+    return parsed;
+  } catch (error) {
+    return null;
+  }
+}
+
+function setStoredAuth(auth) {
+  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(auth));
+}
+
+function clearStoredAuth() {
+  localStorage.removeItem(AUTH_STORAGE_KEY);
+}
 
 function App() {
   const [token, setToken] = useState('');
   const [user, setUser] = useState(null);
   const [page, setPage] = useState('search');
 
+  useEffect(() => {
+    const stored = getStoredAuth();
+    if (stored) {
+      setToken(stored.token);
+      setUser(stored.user);
+    }
+  }, []);
+
+  const navItems = useMemo(() => {
+    const items = [
+      { key: 'search', label: 'Search Spaces' },
+      { key: 'mybookings', label: 'My Bookings' },
+      { key: 'subscription', label: 'Subscription' }
+    ];
+
+    if (user?.role === 'host') {
+      items.push(
+        { key: 'hostbookings', label: 'Host Bookings' },
+        { key: 'add', label: 'Add Space' },
+        { key: 'my', label: 'My Listings' }
+      );
+    }
+
+    return items;
+  }, [user?.role]);
+
+  function handleAuthSuccess(auth) {
+    setToken(auth.token);
+    setUser(auth.user);
+    setPage('search');
+    setStoredAuth(auth);
+  }
+
   function handleLogout() {
     setToken('');
     setUser(null);
     setPage('search');
+    clearStoredAuth();
   }
 
-  if (!token) {
+  if (!token || !user) {
     return (
-      <main style={{ maxWidth: 800, margin: '0 auto', fontFamily: 'Arial', padding: 20 }}>
-        <h1>🏢 SpaceShare</h1>
-        <AuthPage setToken={setToken} setUser={setUser} />
+      <main className="app-root auth-root">
+        <AuthPage onAuthenticated={handleAuthSuccess} />
       </main>
     );
   }
 
-  return (
-    <main style={{ maxWidth: 800, margin: '0 auto', fontFamily: 'Arial', padding: 20 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <h1 style={{ margin: 0, cursor: 'pointer' }} onClick={() => setPage('search')}>🏢 SpaceShare</h1>
-        <div>
-          <span style={{ marginRight: 12 }}><strong>{user?.email}</strong> ({user?.role})</span>
-          <button onClick={handleLogout} style={{ padding: '4px 12px' }}>Logout</button>
-        </div>
-      </div>
+  function renderPage() {
+    if (page === 'search') return <SearchPage token={token} user={user} />;
+    if (page === 'mybookings') return <MyBookingsPage token={token} user={user} />;
+    if (page === 'subscription') return <SubscriptionPage token={token} user={user} />;
+    if (page === 'hostbookings') return <HostBookingsPage token={token} user={user} />;
+    if (page === 'add') return <AddSpacePage token={token} user={user} />;
+    if (page === 'my') return <MyListingsPage token={token} user={user} />;
+    return <SearchPage token={token} user={user} />;
+  }
 
-      <nav style={{ marginBottom: 20, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <button onClick={() => setPage('search')} style={{ padding: '6px 16px', fontWeight: page === 'search' ? 'bold' : 'normal' }}>🔍 Search</button>
-        <button onClick={() => setPage('mybookings')} style={{ padding: '6px 16px', fontWeight: page === 'mybookings' ? 'bold' : 'normal' }}>📖 My Bookings</button>
-        {user?.role === 'host' && (
-          <>
-            <button onClick={() => setPage('add')} style={{ padding: '6px 16px', fontWeight: page === 'add' ? 'bold' : 'normal' }}>➕ Add Space</button>
-            <button onClick={() => setPage('my')} style={{ padding: '6px 16px', fontWeight: page === 'my' ? 'bold' : 'normal' }}>📋 My Listings</button>
-          </>
-        )}
+  return (
+    <main className="app-root">
+      <header className="topbar">
+        <div className="brand">
+          <h1 className="brand-title">SpaceShare</h1>
+          <p className="brand-subtitle">Hourly coworking marketplace dashboard</p>
+        </div>
+        <div className="user-chip">
+          <div>
+            <strong>{user.email}</strong>
+            <div className="user-role">{user.role}</div>
+          </div>
+          <button className="btn btn-muted" onClick={handleLogout}>Logout</button>
+        </div>
+      </header>
+
+      <nav className="nav-tabs">
+        {navItems.map((item) => (
+          <button
+            key={item.key}
+            className={`nav-btn ${page === item.key ? 'active' : ''}`}
+            onClick={() => setPage(item.key)}
+          >
+            {item.label}
+          </button>
+        ))}
       </nav>
 
-      {page === 'search' && <SearchPage token={token} user={user} />}
-      {page === 'mybookings' && <MyBookingsPage token={token} onBack={() => setPage('search')} />}
-      {page === 'add' && <AddSpacePage token={token} onBack={() => setPage('search')} />}
-      {page === 'my' && <MyListingsPage token={token} onBack={() => setPage('search')} />}
+      <section className="page-shell">{renderPage()}</section>
     </main>
   );
 }

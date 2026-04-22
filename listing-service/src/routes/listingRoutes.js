@@ -9,7 +9,15 @@ router.get('/spaces/my', authMiddleware, controller.getMy);
 
 // Public routes
 router.get('/spaces', controller.getAll);
+router.get('/spaces/:id/slots', controller.getSlots);
 router.get('/spaces/:id', controller.getById);
+
+// Availability routes (owner only)
+router.get('/spaces/:id/availability/weekly', authMiddleware, controller.getWeeklyAvailability);
+router.put('/spaces/:id/availability/weekly', authMiddleware, controller.upsertWeeklyAvailability);
+router.get('/spaces/:id/availability/overrides', authMiddleware, controller.getAvailabilityOverrides);
+router.put('/spaces/:id/availability/overrides', authMiddleware, controller.upsertAvailabilityOverride);
+router.delete('/spaces/:id/availability/overrides/:overrideId', authMiddleware, controller.deleteAvailabilityOverride);
 
 // Protected routes (require JWT)
 router.post('/spaces', authMiddleware, controller.create);

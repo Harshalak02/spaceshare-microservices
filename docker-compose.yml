@@ -1,0 +1,146 @@
+version: '3.9'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: spaceshare-redis
+    ports:
+      - '6379:6379'
+    restart: unless-stopped
+
+  auth-service:
+    build:
+      context: ./auth-service
+    env_file:
+      - ./auth-service/.env
+    environment:
+      REDIS_URL: redis://redis:6379
+    ports:
+      - '4001:4001'
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  listing-service:
+    build:
+      context: ./listing-service
+    env_file:
+      - ./listing-service/.env
+    environment:
+      REDIS_URL: redis://redis:6379
+      BOOKING_SERVICE_URL: http://booking-service:4004
+      INTERNAL_SERVICE_TOKEN: spaceshare-internal-token
+    ports:
+      - '4002:4002'
+    depends_on:
+      - redis
+      - booking-service
+    restart: unless-stopped
+
+  search-service:
+    build:
+      context: ./search-service
+    env_file:
+      - ./search-service/.env
+    environment:
+      REDIS_URL: redis://redis:6379
+    ports:
+      - '4003:4003'
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  booking-service:
+    build:
+      context: ./booking-service
+    env_file:
+      - ./booking-service/.env
+    environment:
+      REDIS_URL: redis://redis:6379
+      LISTING_SERVICE_URL: http://listing-service:4002
+      PAYMENT_SERVICE_URL: http://payment-service:4008
+      INTERNAL_SERVICE_TOKEN: spaceshare-internal-token
+    ports:
+      - '4004:4004'
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  subscription-service:
+    build:
+      context: ./subscription-service
+    env_file:
+      - ./subscription-service/.env
+    environment:
+      REDIS_URL: redis://redis:6379
+    ports:
+      - '4005:4005'
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  notification-service:
+    build:
+      context: ./notification-service
+    env_file:
+      - ./notification-service/.env
+    environment:
+      REDIS_URL: redis://redis:6379
+      AUTH_SERVICE_URL: http://auth-service:4001
+      LISTING_SERVICE_URL: http://listing-service:4002
+    ports:
+      - '4006:4006'
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  payment-service:
+    build:
+      context: ./payment-service
+    env_file:
+      - ./payment-service/.env
+    environment:
+      REDIS_URL: redis://redis:6379
+    ports:
+      - '4008:4008'
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  analytics-service:
+    build:
+      context: ./analytics-service
+    env_file:
+      - ./analytics-service/.env
+    environment:
+      REDIS_URL: redis://redis:6379
+    ports:
+      - '4007:4007'
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  api-gateway:
+    build:
+      context: ./api-gateway
+    env_file:
+      - ./api-gateway/.env
+    environment:
+      AUTH_SERVICE_URL: http://auth-service:4001
+      LISTING_SERVICE_URL: http://listing-service:4002
+      SEARCH_SERVICE_URL: http://search-service:4003
+      BOOKING_SERVICE_URL: http://booking-service:4004
+      SUBSCRIPTION_SERVICE_URL: http://subscription-service:4005
+      NOTIFICATION_SERVICE_URL: http://notification-service:4006
+      PAYMENT_SERVICE_URL: http://payment-service:4008
+    ports:
+      - '4000:4000'
+    depends_on:
+      - auth-service
+      - listing-service
+      - search-service
+      - booking-service
+      - subscription-service
+      - notification-service
+      - payment-service
+    restart: unless-stopped

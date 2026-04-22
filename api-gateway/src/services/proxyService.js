@@ -1,14 +1,21 @@
 const axios = require('axios');
 
-async function forwardRequest(serviceUrl, req, res) {
+async function forwardRequest(serviceUrl, req, res, options = {}) {
+  const {
+    targetPath = req.path,
+    body = req.body,
+    headers: extraHeaders = {}
+  } = options;
+
   try {
     const response = await axios({
       method: req.method,
-      url: `${serviceUrl}${req.path}`,
-      data: req.body,
+      url: `${serviceUrl}${targetPath}`,
+      data: body,
       params: req.query,
       headers: {
-        Authorization: req.headers.authorization || ''
+        Authorization: req.headers.authorization || '',
+        ...extraHeaders
       }
     });
 

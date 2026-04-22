@@ -1,0 +1,51 @@
+Use Case Overview
+
+SpaceShare — Subscription-Based Co-working Space Marketplace
+
+THE PROBLEM
+
+Remote workers & freelancers need flexible, affordable workspace beyond home.
+
+Traditional leases: too costly. Coffee shops: unreliable.
+
+THE SOLUTION
+
+SpaceShare — a two-sided marketplace where hosts pay a subscription to list spaces; guests browse & book by hour or day with no hidden fees.
+
+Small business owners, building managers with spare space. Pay a subscription to list and monetise their property.
+
+Freelancers, remote workers, small teams. Search, filter, and book available spaces by hour or day.
+
+Platform manager. Approves listings, manages subscriptions, monitors analytics and platform health.
+
+FUNCTIONAL REQUIREMENTS
+
+
+Host Subscription & Listing
+
+Space Discovery & Search
+
+Booking & Slot Management
+
+Reviews & Ratings
+
+Admin Dashboard
+
+Non-FUNCTIONAL REQUIREMENTS
+
+Availability Consistency  
+99.99 %
+
+Performance 
+Cache Hit : < 500 ms
+Cache Miss : < 1.5 sec
+  
+
+Security   
+JWT expiry 24 Hrs
+
+Concurrency  
+200 Simultaneous Requests 
+
+Scalability  
+500 Baselines users, 2000 peak users

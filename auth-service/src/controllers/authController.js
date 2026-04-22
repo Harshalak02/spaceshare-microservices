@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const { registerUser, loginUser } = require('../services/authService');
+const { registerUser, loginUser, getUserById } = require('../services/authService');
 
 async function register(req, res) {
   try {
@@ -35,4 +35,14 @@ function validateToken(req, res) {
   }
 }
 
-module.exports = { register, login, validateToken };
+async function getUser(req, res) {
+  try {
+    const user = await getUserById(req.params.id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    return res.json(user);
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to fetch user', error: error.message });
+  }
+}
+
+module.exports = { register, login, validateToken, getUser };
