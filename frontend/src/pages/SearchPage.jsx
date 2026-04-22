@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { apiRequest } from '../services/api';
 
+import PaymentModal from '../components/PaymentModal';
+
 function SearchPage({ token, user }) {
   const [form, setForm] = useState({
     location: '',
@@ -15,6 +17,7 @@ function SearchPage({ token, user }) {
   const [message, setMessage] = useState('');
   const [geocoding, setGeocoding] = useState(false);
   const [bookingForm, setBookingForm] = useState({ spaceId: null, start_time: '', end_time: '' });
+  const [paymentSession, setPaymentSession] = useState(null); // { clientSecret, bookingId, spaceId }
 
   function handleChange(e) {
     setForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
@@ -64,18 +67,40 @@ function SearchPage({ token, user }) {
     }
   }
 
-  async function handleBook(spaceId) {
+  async function handleBook(space) {
     if (!bookingForm.start_time || !bookingForm.end_time) {
       alert('Please select start and end time.');
       return;
     }
     try {
-      await apiRequest('/bookings/book', 'POST', {
-        space_id: spaceId,
+      // 1. Create booking (optimistic locking 2 min)
+      const bookingRes = await apiRequest('/bookings/book', 'POST', {
+        space_id: space.id,
         start_time: new Date(bookingForm.start_time).toISOString(),
         end_time: new Date(bookingForm.end_time).toISOString()
       }, token);
-      alert('✅ Booking created!');
+      
+      const bookingId = bookingRes.id;
+
+      // Calculate amount (using space price and time difference)
+      const start = new Date(bookingForm.start_time).getTime();
+      const end = new Date(bookingForm.end_time).getTime();
+      const hours = Math.max(1, Math.ceil((end - start) / (1000 * 60 * 60)));
+      const totalAmount = space.price_per_hour * hours;
+
+      // 2. Create Payment intent
+      const paymentRes = await apiRequest('/payments/create-session', 'POST', {
+        booking_id: bookingId,
+        amount: totalAmount
+      }, token);
+
+      setPaymentSession({ 
+          clientSecret: paymentRes.clientSecret, 
+          intentId: paymentRes.intentId,
+          amount: totalAmount,
+          bookingId, 
+          spaceId: space.id 
+      });
       setBookingForm({ spaceId: null, start_time: '', end_time: '' });
     } catch (err) {
       alert('❌ ' + err.message);
@@ -118,7 +143,29 @@ function SearchPage({ token, user }) {
               <p style={{ margin: '4px 0' }}>📍 {space.location_name || `${space.lat}, ${space.lon}`}</p>
               <p style={{ margin: '4px 0' }}>💰 ₹{space.price_per_hour}/hr &nbsp; 👥 {space.capacity} people</p>
 
-              {bookingForm.spaceId === space.id ? (
+              {paymentSession && paymentSession.spaceId === space.id ? (
+                 <PaymentModal 
+                    clientSecret={paymentSession.clientSecret} 
+                    amount={paymentSession.amount}
+                    onPaymentSuccess={async () => {
+                        try {
+                            await apiRequest('/payments/simulate-success', 'POST', { intentId: paymentSession.intentId }, token);
+                            alert('✅ Booking and Payment confirmed!');
+                        } catch (err) {
+                            alert('Payment succeeded but backend verification failed: ' + err.message);
+                        }
+                        setPaymentSession(null);
+                    }}
+                    onCancel={async () => {
+                        try {
+                            await apiRequest(`/bookings/cancel/${paymentSession.bookingId}`, 'PUT', null, token);
+                        } catch (err) {
+                            console.error('Failed to cancel booking:', err);
+                        }
+                        setPaymentSession(null);
+                    }}
+                 />
+              ) : bookingForm.spaceId === space.id ? (
                 <div style={{ marginTop: 8, padding: 8, background: '#f9f9f9', borderRadius: 4 }}>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                     <label>
@@ -131,12 +178,12 @@ function SearchPage({ token, user }) {
                     </label>
                   </div>
                   <div style={{ marginTop: 8 }}>
-                    <button onClick={() => handleBook(space.id)} style={{ padding: '6px 16px', marginRight: 8 }}>✅ Confirm</button>
-                    <button onClick={() => setBookingForm({ spaceId: null, start_time: '', end_time: '' })} style={{ padding: '6px 16px' }}>Cancel</button>
+                    <button onClick={() => handleBook(space)} style={{ padding: '6px 16px', marginRight: 8, cursor: 'pointer' }}>✅ Confirm</button>
+                    <button onClick={() => setBookingForm({ spaceId: null, start_time: '', end_time: '' })} style={{ padding: '6px 16px', cursor: 'pointer' }}>Cancel</button>
                   </div>
                 </div>
               ) : (
-                <button onClick={() => setBookingForm({ spaceId: space.id, start_time: '', end_time: '' })} style={{ marginTop: 8, padding: '6px 16px' }}>📅 Book</button>
+                <button onClick={() => setBookingForm({ spaceId: space.id, start_time: '', end_time: '' })} style={{ marginTop: 8, padding: '6px 16px', cursor: 'pointer' }}>📅 Book</button>
               )}
             </div>
           ))}

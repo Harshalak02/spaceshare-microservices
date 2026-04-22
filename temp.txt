@@ -1,0 +1,13 @@
+cd auth-service && npm run dev
+cd listing-service && npm run dev
+cd search-service && npm run dev
+cd booking-service && npm run dev
+cd subscription-service && npm run dev
+cd notification-service && npm run dev
+cd analytics-service && npm run dev
+cd payment-service && npm run dev
+cd api-gateway && npm run dev
+cd frontend && npm run dev
+
+
+postgresql://neondb_owner:npg_WKLb5eru9sMk@ep-raspy-haze-aml19mbi.c-5.us-east-1.aws.neon.tech/neondb?sslmode=require

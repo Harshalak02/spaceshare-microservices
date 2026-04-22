@@ -24,4 +24,9 @@ async function loginUser(email, password) {
   return { token, user: { id: user.id, email: user.email, role: user.role } };
 }
 
-module.exports = { registerUser, loginUser };
+async function getUserById(id) {
+  const result = await db.query('SELECT id, email, role FROM users WHERE id = $1', [id]);
+  return result.rows[0];
+}
+
+module.exports = { registerUser, loginUser, getUserById };

@@ -7,6 +7,7 @@ const router = express.Router();
 // All booking routes require JWT
 router.get('/bookings/my', authMiddleware, controller.getMy);
 router.post('/book', authMiddleware, controller.create);
+router.put('/cancel/:bookingId', authMiddleware, controller.cancel);
 router.get('/bookings/:user_id', controller.getByUser);
 
 module.exports = router;
