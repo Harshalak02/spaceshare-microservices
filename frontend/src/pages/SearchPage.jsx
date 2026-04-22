@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { apiRequest } from '../services/api';
+import { apiRequest, fetchRating } from '../services/api';
 
 function SearchPage({ token, user }) {
   const [form, setForm] = useState({
@@ -12,6 +12,7 @@ function SearchPage({ token, user }) {
     capacity: '1'
   });
   const [spaces, setSpaces] = useState([]);
+  const [ratingsBySpace, setRatingsBySpace] = useState({});
   const [message, setMessage] = useState('');
   const [geocoding, setGeocoding] = useState(false);
   const [bookingForm, setBookingForm] = useState({ spaceId: null, start_time: '', end_time: '' });
@@ -58,6 +59,20 @@ function SearchPage({ token, user }) {
       const qs = new URLSearchParams(params).toString();
       const result = await apiRequest(`/search?${qs}`);
       setSpaces(result.spaces || []);
+
+      const ids = (result.spaces || []).map((space) => (typeof space === 'object' ? space.id : space));
+      const ratingPairs = await Promise.all(
+        ids.map(async (id) => {
+          try {
+            const ratingData = await fetchRating(id);
+            return [id, ratingData.average_rating ?? 0];
+          } catch {
+            return [id, 0];
+          }
+        })
+      );
+      setRatingsBySpace(Object.fromEntries(ratingPairs));
+
       setMessage(result.spaces?.length ? `Found ${result.spaces.length} spaces (${result.source})` : 'No spaces found.');
     } catch (err) {
       setMessage('Search failed: ' + err.message);
@@ -117,6 +132,7 @@ function SearchPage({ token, user }) {
               {space.description && <p style={{ margin: '4px 0', color: '#666' }}>{space.description}</p>}
               <p style={{ margin: '4px 0' }}>📍 {space.location_name || `${space.lat}, ${space.lon}`}</p>
               <p style={{ margin: '4px 0' }}>💰 ₹{space.price_per_hour}/hr &nbsp; 👥 {space.capacity} people</p>
+              <p style={{ margin: '4px 0' }}>⭐ Rating: {(ratingsBySpace[space.id] ?? 0).toFixed(1)} / 5</p>
 
               {bookingForm.spaceId === space.id ? (
                 <div style={{ marginTop: 8, padding: 8, background: '#f9f9f9', borderRadius: 4 }}>

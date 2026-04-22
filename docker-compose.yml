@@ -1,0 +1,7 @@
+services:
+  # Only Redis remains locally to act as the Event Bus
+  redis:
+    image: redis:alpine
+    container_name: redis-cache
+    ports:
+      - "6379:6379"

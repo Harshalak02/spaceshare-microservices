@@ -17,3 +17,8 @@ export async function apiRequest(path, method = 'GET', body, token) {
 
   return res.json();
 }
+
+export async function fetchRating(id) {
+  const data = await apiRequest(`/reviews/rating/${id}`);
+  return data;
+}

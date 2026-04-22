@@ -7,6 +7,7 @@ const router = express.Router();
 // Public routes (no auth needed)
 router.use('/auth', (req, res) => forwardRequest(process.env.AUTH_SERVICE_URL, req, res));
 router.use('/search', (req, res) => forwardRequest(process.env.SEARCH_SERVICE_URL, req, res));
+router.use('/reviews', (req, res) => forwardRequest(process.env.REVIEW_SERVICE_URL || 'http://localhost:4008', req, res));
 
 // Protected routes (auth required)
 router.use('/listings', authMiddleware, (req, res) => forwardRequest(process.env.LISTING_SERVICE_URL, req, res));
