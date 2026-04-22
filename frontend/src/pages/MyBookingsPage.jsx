@@ -9,13 +9,13 @@ function MyBookingsPage({ token, onBack }) {
         async function fetchBookings() {
             try {
                 const data = await apiRequest('/bookings/bookings/my', 'GET', null, token);
-                setBookings(data);
+                setBookings(Array.isArray(data) ? data : []);
             } catch (err) {
-                setMessage('Failed to load bookings: ' + err.message);
+                setMessage('Failed to load bookings: ' + (err.message || 'Unknown error'));
             }
         }
         fetchBookings();
-    }, []);
+    }, [token]);
 
     const cardStyle = { border: '1px solid #ddd', padding: 16, margin: '12px 0', borderRadius: 6 };
 

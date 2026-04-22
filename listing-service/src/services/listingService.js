@@ -1,6 +1,6 @@
 const db = require('../models/db');
 const redis = require('../models/redis');
-const fetch = require('node-fetch');
+const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 const { getPlan } = require('../strategies/PlanFactory');
 async function publishListingEvent(type, payload) {
   try {
@@ -71,7 +71,7 @@ async function createSpace(data) {
 
   try {
     await client.query('BEGIN');
-    // 🚀 Subscription enforcement (robust/fault-tolerant)
+    // 🚀 Subscription enforcement/error handling block
     const planResult = await getUserPlan(owner_id);
 
     if (planResult.kind === 'plan') {
@@ -79,19 +79,33 @@ async function createSpace(data) {
       const currentCount = await countUserSpaces(client, owner_id);
 
       if (currentCount >= plan.getListingLimit()) {
-        throw new Error('Listing limit reached. Upgrade your plan.');
+        const err = new Error('Listing limit reached. Upgrade your plan.');
+        err.code = 'PLAN_LIMIT_REACHED';
+        err.status = 403;
+        throw err;
       }
     } else if (planResult.kind === 'none') {
-      // No subscription exists for this user. Surface an explicit error so frontend
-      // can trigger a plan-selection popup. Do NOT assume a free plan.
       const err = new Error('No subscription found for user');
       err.code = 'NO_SUBSCRIPTION';
-      err.status = 402; // Payment Required / needs plan selection
+      err.status = 402;
       throw err;
     } else {
-      // planResult.kind === 'error' -> subscription service failed.
-      // Fail open: allow creation to proceed but log a warning.
-      console.warn(`[listing-service] Subscription lookup failed for user=${owner_id}:`, planResult.reason || planResult.error?.message || planResult);
+      console.warn(
+        `[listing-service] Subscription lookup failed for user=${owner_id}:`,
+        planResult.reason || planResult.error?.message || planResult
+      );
+
+      // ✅ FALLBACK (VERY IMPORTANT)
+      const plan = getPlan('free');
+
+      const currentCount = await countUserSpaces(client, owner_id);
+
+      if (currentCount >= plan.getListingLimit()) {
+        const err = new Error('Listing limit reached. Upgrade your plan.');
+        err.code = 'PLAN_LIMIT_REACHED';
+        err.status = 403;
+        throw err;
+      }
     }
     const result = await client.query(
       `INSERT INTO spaces (title, description, location_name, lat, lon, price_per_hour, capacity, owner_id)
@@ -100,7 +114,13 @@ async function createSpace(data) {
     );
 
     const space = result.rows[0];
-    const normalizedAmenities = await linkAmenitiesToSpace(client, space.id, amenities);
+    let normalizedAmenities = [];
+
+    try {
+      normalizedAmenities = await linkAmenitiesToSpace(client, space.id, amenities);
+    } catch (e) {
+      console.warn("Amenities linking failed:", e.message);
+    }
 
     await client.query('COMMIT');
 
@@ -233,11 +253,14 @@ async function getUserPlan(userId) {
       return { kind: 'error', reason: 'invalid_json', error: e };
     }
 
-    if (!json || typeof json.plan !== 'string') {
+    const planName = (typeof json?.plan === 'string' && json.plan.trim())
+      || (typeof json?.plan_type === 'string' && json.plan_type.trim());
+
+    if (!planName) {
       return { kind: 'error', reason: 'unexpected_payload', payload: json };
     }
 
-    return { kind: 'plan', plan: json.plan };
+    return { kind: 'plan', plan: planName.toLowerCase() };
   } catch (err) {
     if (err.name === 'AbortError') {
       return { kind: 'error', reason: 'timeout', error: err };

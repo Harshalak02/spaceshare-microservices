@@ -34,6 +34,9 @@ async function create(req, res) {
     if (error && error.code === 'NO_SUBSCRIPTION') {
       return res.status(error.status || 402).json({ message: error.message, code: 'NO_SUBSCRIPTION' });
     }
+    if (error && error.code === 'PLAN_LIMIT_REACHED') {
+      return res.status(error.status || 403).json({ message: error.message, code: 'PLAN_LIMIT_REACHED' });
+    }
     res.status(500).json({ message: 'Failed to create space', error: error.message });
   }
 }
@@ -123,47 +126,12 @@ async function remove(req, res) {
     res.status(500).json({ message: 'Failed to delete space', error: error.message });
   }
 }
-// async function autocomplete(req, res) {
-//   try {
-//     const q = req.query.q;
-//     if (!q) return res.json([]);
-
-//     console.log("🔍 Query:", q);  // ADD
-
-//     const response = await fetch(
-//       `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=5&countrycodes=in`,
-//       {
-//         headers: {
-//           "User-Agent": "spaceshare-app"
-//         }
-//       }
-//     );
-
-//     console.log("🌐 Status:", response.status); // ADD
-
-//     const data = await response.json();
-
-//     console.log("✅ Data received:", data.length); // ADD
-
-//     res.json(data);
-
-//   } catch (err) {
-//     console.error("❌ Autocomplete error FULL:", err); // IMPORTANT
-//     res.status(500).json({ message: "Autocomplete failed" });
-//   }
-// }
-
-
-
-
 async function autocomplete(req, res) {
   try {
-    let q = req.query.q;
-
+    const q = req.query.q;
     if (!q) return res.json([]);
 
-    // ✅ CLEAN INPUT (IMPORTANT)
-    q = q.trim().replace(/\s+/g, ' ');
+    console.log("🔍 Query:", q);  // ADD
 
     const response = await fetch(
       `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=5&countrycodes=in`,
@@ -174,28 +142,63 @@ async function autocomplete(req, res) {
       }
     );
 
-    // ✅ HANDLE NON-200 (VERY IMPORTANT)
-    if (!response.ok) {
-      console.error("❌ Nominatim failed:", response.status);
-      return res.json([]); // don't crash
-    }
+    console.log("🌐 Status:", response.status); // ADD
 
-    // ✅ SAFE JSON PARSE
-    let data = [];
-    try {
-      data = await response.json();
-    } catch (e) {
-      console.error("❌ JSON parse failed");
-      return res.json([]);
-    }
+    const data = await response.json();
+
+    console.log("✅ Data received:", data.length); // ADD
 
     res.json(data);
 
   } catch (err) {
-    console.error("❌ Autocomplete error:", err);
-    res.json([]); // NEVER send 500 for autocomplete
+    console.error("❌ Autocomplete error FULL:", err); // IMPORTANT
+    res.status(500).json({ message: "Autocomplete failed" });
   }
 }
+
+
+
+
+// async function autocomplete(req, res) {
+//   try {
+//     let q = req.query.q;
+
+//     if (!q) return res.json([]);
+
+//     // ✅ CLEAN INPUT (IMPORTANT)
+//     q = q.trim().replace(/\s+/g, ' ');
+
+//     const response = await fetch(
+//       `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=5&countrycodes=in`,
+//       {
+//         headers: {
+//           "User-Agent": "spaceshare-app"
+//         }
+//       }
+//     );
+
+//     // ✅ HANDLE NON-200 (VERY IMPORTANT)
+//     if (!response.ok) {
+//       console.error("❌ Nominatim failed:", response.status);
+//       return res.json([]); // don't crash
+//     }
+
+//     // ✅ SAFE JSON PARSE
+//     let data = [];
+//     try {
+//       data = await response.json();
+//     } catch (e) {
+//       console.error("❌ JSON parse failed");
+//       return res.json([]);
+//     }
+
+//     res.json(data);
+
+//   } catch (err) {
+//     console.error("❌ Autocomplete error:", err);
+//     res.json([]); // NEVER send 500 for autocomplete
+//   }
+// }
 async function reverseGeocode(req, res) {
   try {
     const { lat, lon } = req.query;

@@ -10,10 +10,21 @@ export async function apiRequest(path, method = 'GET', body, token) {
     body: body ? JSON.stringify(body) : undefined
   });
 
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({}));
-    throw new Error(error.message || 'Request failed');
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    data = {};
   }
 
-  return res.json();
+ if (!res.ok) {
+  throw {
+    message: data?.message || `Request failed with status ${res.status}`,
+    status: res.status,
+    code: data?.code || null,
+    details: data
+  };
+}
+
+return data;
 }

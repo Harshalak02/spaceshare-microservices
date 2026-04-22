@@ -16,6 +16,7 @@ async function create(req, res) {
     });
     res.status(201).json(booking);
   } catch (error) {
+    console.error('❌ [booking] create error:', error.message, error.stack);
     const status = error.message.includes('already booked') ? 409 : 500;
     res.status(status).json({ message: error.message });
   }
@@ -26,6 +27,7 @@ async function getMy(req, res) {
     const bookings = await service.getBookingsByUser(req.user.userId);
     res.json(bookings);
   } catch (error) {
+    console.error('❌ [booking] getMy error:', error.message, error.stack);
     res.status(500).json({ message: 'Failed to get bookings', error: error.message });
   }
 }
