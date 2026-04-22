@@ -31,7 +31,9 @@ function MyBookingsPage({ token, onBack }) {
                     <p>🕐 <strong>Start:</strong> {new Date(b.start_time).toLocaleString()}</p>
                     <p>🕐 <strong>End:</strong> {new Date(b.end_time).toLocaleString()}</p>
                     <p>📅 <strong>Booked on:</strong> {new Date(b.created_at).toLocaleString()}</p>
-                    <p style={{ color: 'green', fontWeight: 'bold' }}>✅ Confirmed</p>
+                    <p style={{ color: b.status === 'confirmed' ? 'green' : 'orange', fontWeight: 'bold' }}>
+                        {b.status === 'confirmed' ? '✅ Confirmed' : `⏳ ${b.status}`}
+                    </p>
                 </div>
             ))}
         </div>

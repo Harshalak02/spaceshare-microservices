@@ -12,5 +12,6 @@ router.use('/search', (req, res) => forwardRequest(process.env.SEARCH_SERVICE_UR
 router.use('/listings', authMiddleware, (req, res) => forwardRequest(process.env.LISTING_SERVICE_URL, req, res));
 router.use('/bookings', authMiddleware, (req, res) => forwardRequest(process.env.BOOKING_SERVICE_URL, req, res));
 router.use('/subscriptions', authMiddleware, (req, res) => forwardRequest(process.env.SUBSCRIPTION_SERVICE_URL, req, res));
+router.use('/payments', authMiddleware, (req, res) => forwardRequest(process.env.PAYMENT_SERVICE_URL, req, res));
 
 module.exports = router;
