@@ -6,7 +6,9 @@ const router = express.Router();
 
 // /spaces/my MUST come before /spaces/:id to avoid route shadowing
 router.get('/spaces/my', authMiddleware, controller.getMy);
-
+router.get('/amenities', controller.getAmenities);
+router.get('/autocomplete', controller.autocomplete);
+router.get('/reverse', controller.reverseGeocode);
 // Public routes
 router.get('/spaces', controller.getAll);
 router.get('/spaces/:id/slots', controller.getSlots);
