@@ -42,7 +42,9 @@ async function handleBookingConfirmed(booking) {
     await sendAndLogNotification(hostId, 'BOOKING_CONFIRMED', host.email, hostSubject, hostBody, channel);
 
   } catch (error) {
-    console.error(`❌ [Notification] Error handling BOOKING_CONFIRMED:`, error.message);
+    // 💡 Enhanced error logging to expose the exact failed URL
+    const failedUrl = error.config ? error.config.url : 'Unknown URL';
+    console.error(`❌ [Notification] Error handling BOOKING_CONFIRMED: 404 Not Found at -> ${failedUrl}`);
   }
 }
 

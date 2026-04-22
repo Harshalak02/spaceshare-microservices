@@ -1,14 +1,14 @@
 CREATE TABLE IF NOT EXISTS spaces (
-  id INT PRIMARY KEY,
-  title TEXT,
+  id SERIAL PRIMARY KEY,
+  title TEXT NOT NULL,
   description TEXT,
   location_name TEXT,
-  lat DOUBLE PRECISION NOT NULL,
-  lon DOUBLE PRECISION NOT NULL,
-  price_per_hour NUMERIC NOT NULL,
-  capacity INT NOT NULL,
+  lat DOUBLE PRECISION,
+  lon DOUBLE PRECISION,
+  price_per_hour NUMERIC,
+  capacity INT,
   owner_id INT,
-  created_at TIMESTAMP
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 ALTER TABLE spaces ADD COLUMN IF NOT EXISTS location_name TEXT;

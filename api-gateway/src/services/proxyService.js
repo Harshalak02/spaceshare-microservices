@@ -5,16 +5,30 @@ async function forwardRequest(serviceUrl, req, res) {
     return res.status(500).json({ message: 'Gateway misconfiguration: service URL missing' });
   }
 
-  let forwardedPath = req.originalUrl;
+  // Use originalUrl but strip query string to avoid doubling, while keeping the full path
+  let forwardedPath = req.originalUrl.split('?')[0];
 
   // 🔥 Route-specific path rewriting
-  if (req.originalUrl.startsWith('/api/auth')) {
-    forwardedPath = req.originalUrl.replace(/^\/api\/auth/, '');
-  } else if (req.originalUrl.startsWith('/api/listings')) {
-    forwardedPath = req.originalUrl.replace(/^\/api\/listings/, '');
-  } else if (req.originalUrl.startsWith('/api/subscriptions/subscribe')) {
-  forwardedPath = req.originalUrl.replace('/api/subscriptions', '');
-}
+  // We need to strip the /api prefix if present
+  forwardedPath = forwardedPath.replace(/^\/api/, '');
+
+  // 🔥 Route-specific path rewriting
+  if (forwardedPath.startsWith('/auth')) {
+    forwardedPath = forwardedPath.replace(/^\/auth/, '');
+  } else if (forwardedPath.startsWith('/listings')) {
+    forwardedPath = forwardedPath.replace(/^\/listings/, '');
+  } else if (forwardedPath.startsWith('/search')) {
+    forwardedPath = forwardedPath.replace(/^\/search/, '');
+  } else if (forwardedPath.startsWith('/bookings')) {
+    forwardedPath = forwardedPath.replace(/^\/bookings/, '');
+  } else if (forwardedPath.startsWith('/subscriptions/subscribe')) {
+    forwardedPath = forwardedPath.replace('/subscriptions', '');
+  } else if (forwardedPath.startsWith('/subscriptions')) {
+    forwardedPath = forwardedPath.replace(/^\/subscriptions/, '');
+  } else if (forwardedPath.startsWith('/payments')) { 
+    // ✅ ADDED THIS BLOCK: Strip the /payments prefix
+    forwardedPath = forwardedPath.replace(/^\/payments/, '');
+  }
 
   try {
     const response = await axios({
