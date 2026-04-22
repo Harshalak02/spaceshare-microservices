@@ -1,22 +1,92 @@
-import { useState } from 'react';
-import { apiRequest } from '../services/api';
+import { useEffect, useState } from 'react';
+import { ApiError, apiRequest } from '../services/api';
+import SubscriptionModal from '../components/SubscriptionModal';
+import UpgradeModal from '../components/UpgradeModal';
 
-const initialForm = {
-    title: '',
-    description: '',
-    location_name: '',
-    lat: '',
-    lon: '',
-    price_per_hour: '',
-    capacity: '',
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
-};
+function getInitialForm() {
+    return {
+        title: '',
+        description: '',
+        location_name: '',
+        lat: '',
+        lon: '',
+        price_per_hour: '',
+        capacity: '',
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+    };
+}
 
-function AddSpacePage({ token }) {
-    const [form, setForm] = useState(initialForm);
+function getUserIdFromToken(token) {
+    try {
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        return payload.userId;
+    } catch {
+        return null;
+    }
+}
+
+function normalizePlan(planName) {
+    if (!planName || typeof planName !== 'string') return null;
+
+    const normalized = planName.trim().toLowerCase();
+    if (normalized === 'free' || normalized === 'basic' || normalized === 'pro') {
+        return normalized;
+    }
+    if (normalized === 'host_monthly') return 'basic';
+    if (normalized === 'host_quarterly' || normalized === 'host_yearly') return 'pro';
+    return null;
+}
+
+function formatPlan(plan) {
+    if (!plan) return '-';
+    return `${plan.charAt(0).toUpperCase()}${plan.slice(1)}`;
+}
+
+function AddSpacePage({ token, user }) {
+    const [form, setForm] = useState(getInitialForm);
     const [geocodeBusy, setGeocodeBusy] = useState(false);
     const [submitBusy, setSubmitBusy] = useState(false);
+    const [subscriptionBusy, setSubscriptionBusy] = useState(true);
+    const [currentPlan, setCurrentPlan] = useState(null);
+    const [showSubscriptionModal, setShowSubscriptionModal] = useState(false);
+    const [showUpgradeModal, setShowUpgradeModal] = useState(false);
     const [notice, setNotice] = useState({ type: '', text: '' });
+
+    const actualUserId = user?.userId || getUserIdFromToken(token);
+
+    useEffect(() => {
+        async function checkSubscription() {
+            setSubscriptionBusy(true);
+            try {
+                const details = await apiRequest('/subscriptions/my', { token });
+                const plan = normalizePlan(details?.plan || details?.plan_type);
+
+                if (plan) {
+                    setCurrentPlan(plan);
+                    setShowSubscriptionModal(false);
+                } else {
+                    setCurrentPlan(null);
+                    setShowSubscriptionModal(true);
+                }
+            } catch (error) {
+                if (error instanceof ApiError && error.status === 404) {
+                    setCurrentPlan(null);
+                    setShowSubscriptionModal(true);
+                } else {
+                    setNotice({ type: 'error', text: `Failed to verify subscription: ${error.message}` });
+                }
+            } finally {
+                setSubscriptionBusy(false);
+            }
+        }
+
+        if (!token || !actualUserId) {
+            setSubscriptionBusy(false);
+            return;
+        }
+
+        checkSubscription();
+    }, [token, actualUserId]);
 
     function updateForm(event) {
         const { name, value } = event.target;
@@ -53,8 +123,23 @@ function AddSpacePage({ token }) {
         }
     }
 
+    function handleSubscriptionSuccess(plan) {
+        const normalizedPlan = normalizePlan(plan);
+        setCurrentPlan(normalizedPlan);
+        setShowSubscriptionModal(false);
+        setShowUpgradeModal(false);
+        setNotice({ type: 'success', text: `${formatPlan(normalizedPlan)} plan activated. You can now create listings.` });
+    }
+
     async function handleSubmit(event) {
         event.preventDefault();
+
+        if (!currentPlan) {
+            setShowSubscriptionModal(true);
+            setNotice({ type: 'info', text: 'Choose a subscription plan before creating a listing.' });
+            return;
+        }
+
         setSubmitBusy(true);
         setNotice({ type: '', text: '' });
 
@@ -75,13 +160,26 @@ function AddSpacePage({ token }) {
             });
 
             setNotice({ type: 'success', text: 'Listing created successfully.' });
-            setForm(initialForm);
+            setForm(getInitialForm());
         } catch (error) {
-            setNotice({ type: 'error', text: `Unable to create listing: ${error.message}` });
+            const code = error instanceof ApiError ? error.payload?.code : null;
+
+            if (code === 'NO_SUBSCRIPTION' || (error instanceof ApiError && error.status === 402)) {
+                setCurrentPlan(null);
+                setShowSubscriptionModal(true);
+                setNotice({ type: 'info', text: 'No active subscription found. Please select a plan to continue.' });
+            } else if (code === 'PLAN_LIMIT_REACHED') {
+                setShowUpgradeModal(true);
+                setNotice({ type: 'info', text: 'Listing limit reached for your current plan. Upgrade to continue.' });
+            } else {
+                setNotice({ type: 'error', text: `Unable to create listing: ${error.message}` });
+            }
         } finally {
             setSubmitBusy(false);
         }
     }
+
+    const isBusy = geocodeBusy || submitBusy || subscriptionBusy;
 
     return (
         <div className="stack fade">
@@ -90,7 +188,28 @@ function AddSpacePage({ token }) {
                 <p>Define location, pricing, and timezone to start accepting bookings.</p>
             </div>
 
-            <section className="card">
+            <section className="card stack" style={{ gap: '0.75rem' }}>
+                {subscriptionBusy ? (
+                    <div className="notice info">Checking subscription status...</div>
+                ) : (
+                    <div className={`notice ${currentPlan ? 'success' : 'info'}`}>
+                        {currentPlan
+                            ? `Current plan: ${formatPlan(currentPlan)}`
+                            : 'No subscription found. Select a plan to start listing spaces.'}
+                    </div>
+                )}
+
+                <div className="btn-row">
+                    <button
+                        className="btn btn-muted"
+                        type="button"
+                        onClick={() => setShowSubscriptionModal(true)}
+                        disabled={subscriptionBusy}
+                    >
+                        {currentPlan ? 'Change Plan' : 'Choose Plan'}
+                    </button>
+                </div>
+
                 <form className="stack" onSubmit={handleSubmit}>
                     <div className="grid-2">
                         <div className="field">
@@ -155,14 +274,32 @@ function AddSpacePage({ token }) {
                     </div>
 
                     <div className="btn-row">
-                        <button className="btn btn-primary" type="submit" disabled={submitBusy}>
+                        <button className="btn btn-primary" type="submit" disabled={isBusy}>
                             {submitBusy ? 'Creating...' : 'Create Listing'}
                         </button>
                     </div>
                 </form>
 
-                {notice.text ? <div className={`notice ${notice.type || 'info'}`} style={{ marginTop: '0.75rem' }}>{notice.text}</div> : null}
+                {notice.text ? <div className={`notice ${notice.type || 'info'}`}>{notice.text}</div> : null}
             </section>
+
+            <SubscriptionModal
+                isOpen={showSubscriptionModal}
+                onClose={() => setShowSubscriptionModal(false)}
+                onSubscribe={handleSubscriptionSuccess}
+                token={token}
+                userId={actualUserId}
+            />
+
+            <UpgradeModal
+                isOpen={showUpgradeModal}
+                onClose={() => setShowUpgradeModal(false)}
+                onUpgrade={() => {
+                    setShowUpgradeModal(false);
+                    setShowSubscriptionModal(true);
+                }}
+                currentPlan={currentPlan || 'free'}
+            />
         </div>
     );
 }

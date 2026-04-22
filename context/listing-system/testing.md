@@ -1,78 +1,64 @@
-# Listing System Test Plan (Hourly Slot Model)
+# Listing System Testing Guide
 
-## 1. Test Objectives
-1. Verify weekly schedule and override correctness.
-2. Verify accurate 1-hour slot timeline generation.
-3. Verify reservation overlay correctness.
-4. Validate NFR targets for slot timeline reads.
+Last synchronized with implementation: 2026-04-22
 
-## 2. Unit Tests
-Targets:
-- schedule validation (open < close, hour alignment)
-- override precedence
-- timezone conversion helpers
-- slot splitting into 60-minute boundaries
+## 1. Test objectives
+1. Validate listing CRUD and ownership behavior.
+2. Validate weekly schedule and override correctness.
+3. Validate slot timeline generation and reservation overlay.
+4. Validate integrated booking effect on slot visibility.
 
-Examples:
-- 06:00 to 10:00 generates exactly 4 slots
-- closed_all_day override yields zero slots
-- invalid 06:30 start rejected
+## 2. Unit test focus areas
+- timezone validation and normalization helpers.
+- hour-aligned time validation.
+- weekly full-payload (0..6) enforcement logic.
+- override precedence over weekly schedule.
+- slot generation boundary logic for date ranges.
 
-## 3. Integration Tests
-Targets:
-- weekly schedule CRUD
-- override upsert/delete
-- slot timeline endpoint with mocked reservation overlay
+## 3. Integration test scenarios
+1. Weekly availability upsert stores seven day rows.
+2. Override upsert/delete updates daily behavior correctly.
+3. Slot endpoint enforces range and date validation.
+4. Reserved-slot overlay marks generated slots as reserved.
+5. include_unavailable=false filters reserved slots out.
+6. include_unavailable=true returns available and reserved slots.
 
-Examples:
-- weekly open schedule returns expected slots
-- override on one date replaces weekly window
-- reservation overlay marks slots unavailable
+## 4. Security test scenarios
+1. Non-owner cannot update/delete listing or availability.
+2. Owner can read and update weekly/override endpoints.
+3. Gateway path requires auth for listing route family.
 
-## 4. Contract Tests
-1. listing-service <-> booking-service reserved slot contract.
-2. event-driven cache invalidation contract on BOOKING_CREATED/CANCELLED.
+## 5. Contract test scenarios
+1. booking reserved-slot API compatibility.
+2. slot payload shape consumed by frontend search/booking flow.
+3. listing CRUD event payload shape (LISTING_CREATED/UPDATED/DELETED).
 
-## 5. End-to-End Tests
-1. Host sets weekday windows in UI.
-2. Guest opens calendar and sees slots.
-3. Guest booking removes the slot from next calendar fetch.
-4. Guest cancellation reopens slot after invalidation/TTL.
+## 6. End-to-end validation performed in current cycle
+Validated:
+- register/login
+- host listing creation
+- search and slot read
+- booking from slot selection
+- booking conflict handling
+- cancellation and slot re-availability after refresh
 
-## 6. Performance and Load Tests
-Scenarios:
-1. 200 concurrent slot timeline requests on same listing.
-2. Mixed load: search + slot reads for 2000 virtual users.
+Scope note:
+- final requested E2E cycle excluded notification feature validation.
 
-Success criteria:
-- cache hit p95 under 500 ms
-- cache miss p95 under 1.5 sec
+## 7. Performance and reliability backlog
+Planned:
+1. stress test 200 concurrent slot reads for same listing/date range.
+2. mixed workload benchmark with search plus slot reads.
+3. timeout/failure-path tests when booking-service is unavailable.
 
-## 7. Reliability Tests
-1. booking-service overlay timeout handling.
-2. cache unavailable fallback behavior.
-3. DB fail/recover behavior for schedule endpoints.
+## 8. Regression suite minimum
+Must remain green:
+- GET /spaces
+- GET /spaces/:id
+- GET /spaces/:id/slots
+- GET/PUT /spaces/:id/availability/weekly
+- GET/PUT/DELETE /spaces/:id/availability/overrides
 
-## 8. Security Tests
-1. non-owner cannot update schedule.
-2. guest can read slots only for active listing.
-3. invalid timezone/date inputs rejected.
-
-## 9. Regression Suite
-Must always pass:
-- existing listing CRUD
-- schedule update and read
-- slot timeline generation
-- slot timeline after booking event invalidation
-
-## 10. CI Gates
-1. Unit + integration pass.
-2. Contract test pass for reserved-slot adapter.
-3. Coverage goals:
-- slot engine >= 90%
-- schedule validation >= 90%
-
-## 11. Exit Criteria
-1. Host schedule setup is stable and validated.
-2. Guest slot view is correct and timezone-safe.
-3. Performance SLO targets are met on test workloads.
+## 9. Known testing gaps
+1. no event-driven cache invalidation test for booking events (not implemented in listing-service).
+2. no committed load-test report artifact in repository docs.

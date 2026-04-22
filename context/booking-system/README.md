@@ -1,31 +1,43 @@
-# Booking System Planning Index
+# Booking System Documentation Index
 
-This folder contains modular planning docs for the Booking subsystem.
+Last synchronized with implementation: 2026-04-22
 
+This folder documents the booking subsystem used by hourly reservations.
+
+## Current implementation snapshot
+- Booking requests are slot-based: start_slot_utc plus slot_count.
+- Legacy start_time/end_time payloads are still accepted and translated for compatibility.
+- Payment is attempted before booking persistence through booking-service payment bridge.
+- Conflict safety is enforced by booking_slots active-slot unique index.
+- Cancellation releases active slot occupancy and stores cancellation metadata.
+- Internal reserved-slot endpoint is used by listing-service to compose slot timelines.
+- Review submission endpoint is not implemented in current booking-service routes.
+
+## Document map
 1. architecture.md
-- Target architecture, ASRs, stakeholders, and runtime flows.
+- Runtime architecture, boundaries, ownership, and flow diagrams in text form.
 
 2. design.md
-- Detailed module responsibilities, lifecycle design, and policies.
+- Module-level behavior, validations, lifecycle handling, and compatibility logic.
 
 3. api-contracts.md
-- Existing and proposed APIs, payloads, and event contracts.
+- Implemented endpoint contracts, payloads, error shapes, and emitted event contracts.
 
 4. data-model.md
-- Schema evolution, constraints, indexes, and migration strategy.
+- Current schema, indexes, slot occupancy model, and migration-safe notes.
 
 5. nfr-and-tactics.md
-- NFR mapping, tactics, budgets, patterns, and risks.
+- Availability, performance, concurrency, and security tactics tied to implementation.
 
 6. adrs.md
-- Architecture Decision Records using Nygard format.
+- Booking-specific architecture decisions and current status.
 
 7. testing.md
-- Unit/integration/contract/e2e/load/reliability test strategy.
+- Practical test plan and executed E2E flow coverage.
 
 8. roadmap.md
-- Phased implementation milestones and acceptance criteria.
+- Delivery phases with status markers for done/in-progress/backlog work.
 
-Cross-cutting analysis references:
+Cross-cutting references:
 - ../design-principles-and-patterns-analysis.md
 - ../architectural-tactics-tradeoff-analysis.md

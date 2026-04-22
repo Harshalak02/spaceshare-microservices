@@ -1,105 +1,94 @@
-# Booking System Detailed Design (Hourly Slot Model)
+# Booking System Detailed Design
 
-## 1. Design Goals
-1. Guarantee no duplicate reservation for any 1-hour slot.
-2. Support contiguous multi-slot booking requests.
-3. Keep booking APIs simple and explicit for slot semantics.
-4. Integrate with listing-service schedule and policies.
+Last synchronized with implementation: 2026-04-22
 
-## 2. Module Design
-### 2.1 Request Validation Module
-Validations:
-- space_id required
-- start_slot_utc required and aligned to hour boundary
-- slot_count integer >= 1
-- guest_count >= 1
-- end derived as start + slot_count * 60 min
+## 1. Design goals
+1. Prevent duplicate reservations under concurrent create requests.
+2. Keep slot payload canonical while preserving legacy compatibility.
+3. Preserve payment and booking consistency by failing fast before DB commit.
+4. Provide reservation truth to listing timeline generation.
 
-### 2.2 Listing Snapshot Adapter
-Fetch and validate:
-- listing exists and active
-- capacity supports guest_count
-- price_per_hour snapshot
-- cancellation policy and instant book flag
-
-### 2.3 Slot Sequencer
+## 2. Module design
+### 2.1 Request validation and normalization
 Responsibilities:
-- expand request into contiguous slot windows
-- example: start 10:00, slot_count 3 -> [10-11], [11-12], [12-13]
+- validate space_id, slot_count, guest_count.
+- validate start_slot_utc timestamp quality.
+- enforce second=0 and millisecond=0 alignment.
+- convert legacy start_time/end_time payload into start_slot_utc + slot_count.
 
-### 2.4 Conflict Guard
+### 2.2 Listing snapshot adapter
 Responsibilities:
-- check and reserve all requested slots atomically
-- reject with BOOKING_CONFLICT if any slot occupied
+- fetch listing snapshot from listing-service.
+- validate listing existence and basic booking eligibility.
+- enforce guest_count <= capacity.
+- snapshot price_per_hour and host/instant-book metadata.
 
-Implementation:
-- transactional insert into booking_slots with unique constraint
-- conflict on unique index means slot already reserved
-
-### 2.5 Pricing Engine
-Computation:
-- subtotal = slot_count * price_per_hour
-- platform fee and taxes from config
-- total stored as immutable snapshot values
-
-### 2.6 Lifecycle and Policy Module
+### 2.3 Payment bridge adapter
 Responsibilities:
-- state transitions
-- cancellation window and refund logic
-- completion marker after end slot
+- call payment-service before booking DB write path.
+- support both strict and non-strict behavior through runtime config.
+- return failure to create flow when strict payment fails.
 
-### 2.7 Reservation Export Module
+### 2.4 Slot reservation engine
 Responsibilities:
-- provide reserved slot ranges to listing-service for timeline overlay
+- expand contiguous slots from start_slot_utc + slot_count.
+- persist booking row plus booking_slots rows in one transaction.
+- rely on active-slot unique index for deterministic conflict handling.
 
-## 3. Create Booking Sequence
-1. Validate request.
-2. Fetch listing snapshot.
-3. Generate requested slot sequence.
-4. Start DB transaction.
-5. Insert booking row in pending/confirmed.
-6. Insert each requested slot into booking_slots.
-7. If any slot insert conflicts, rollback and return BOOKING_CONFLICT.
-8. Commit, publish event, clear relevant caches.
+### 2.5 Lifecycle and history module
+Responsibilities:
+- apply valid transitions using shared helper.
+- append booking_status_history for transition audit.
+- cancel flow writes cancellation metadata and releases occupancy rows.
 
-## 4. Cancellation Sequence
-1. Validate ownership and allowed state.
-2. Compute refund based on policy and time-to-start.
-3. Update booking status to cancelled.
-4. Mark booking_slots rows as released (keep history for audit and analytics).
-5. Publish cancellation event.
+### 2.6 Reservation export module
+Responsibilities:
+- return reserved slot windows for listing-service composition.
+- support range filtering by from/to query params.
 
-## 5. API Read Design
-### Guest
-- /bookings/my returns own bookings with slot_count and timing.
+## 3. Create booking sequence (implemented)
+1. Parse and validate request body.
+2. Normalize canonical slot fields.
+3. Fetch listing snapshot.
+4. Compute pricing snapshot:
+- subtotal = price_per_hour * slot_count
+- platform_fee_amount currently 0
+- tax_amount currently 0
+5. Execute payment bridge call.
+6. Begin transaction and insert bookings row.
+7. Insert booking_slots rows for each hour.
+8. On unique conflict, rollback and return conflict response.
+9. On success, commit and emit BOOKING_CREATED.
+10. Emit BOOKING_CONFIRMED when initial status is confirmed.
 
-### Host
-- /bookings/host/my returns bookings for owned listings.
+## 4. Cancel booking sequence (implemented)
+1. Resolve booking by booking_id.
+2. Validate caller authorization (guest or host).
+3. Enforce allowed source states (pending or confirmed).
+4. Update booking status and cancellation metadata.
+5. Release booking_slots occupancy rows.
+6. Record status history and emit BOOKING_CANCELLED.
 
-### Internal
-- /internal/listings/:id/reserved-slots returns occupied slot windows.
+## 5. Event-driven confirmation path
+1. booking-service subscribes to PAYMENT_SUCCESS on Redis events channel.
+2. On valid booking_id, updateBookingStatus(booking_id, confirmed) is invoked.
+3. Transition helper emits BOOKING_CONFIRMED if status changed.
 
-## 6. Security Design
-1. Protect all booking read endpoints.
-2. Enforce user ownership checks.
-3. Enforce host ownership for host operations.
-4. Restrict internal endpoints to trusted network/gateway token.
+## 6. Endpoint behavior summary
+- GET /bookings/my: caller bookings.
+- GET /bookings/host/my: host bookings.
+- GET /bookings/:user_id: self/admin only.
+- POST /book: create booking.
+- POST /bookings/:booking_id/cancel: cancel booking.
+- GET /internal/listings/:space_id/reserved-slots: internal reservation export.
 
-## 7. Error Codes
-- BOOKING_VALIDATION_ERROR
-- BOOKING_CONFLICT
-- BOOKING_FORBIDDEN
-- LISTING_UNAVAILABLE
-- BOOKING_INVALID_STATE_TRANSITION
-- DEPENDENCY_UNAVAILABLE
+## 7. Security design
+1. JWT enforced for external booking routes.
+2. Ownership checks on user- and booking-scoped operations.
+3. Internal endpoint supports X-Internal-Token guard.
 
-## 8. Rollout Strategy
-1. Add new columns/tables and keep old range fields for compatibility.
-2. Add slot_count-based create path.
-3. Migrate frontend to slot_count request payload.
-4. Deprecate loose range-path assumptions.
-
-## 9. Open Decisions
-1. pending approvals in MVP or phase 2 only?
-2. should minimum booking slots be configurable per listing?
-3. should maximum slot_count per booking be global or per listing?
+## 8. Known design gaps
+1. Review endpoint and review persistence are not implemented.
+2. Completion and refund transitions are not exposed by API.
+3. Error responses are message-based, not structured code/detail objects.
+4. Pagination/filter query contract is not yet implemented for list endpoints.

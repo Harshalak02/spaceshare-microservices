@@ -1,69 +1,64 @@
-# Booking System NFR Plan and Tactics (Hourly Slot Model)
+# Booking System NFRs and Tactics
 
-## 1. NFR Targets
-1. Availability consistency target: 99.99%.
-2. Performance:
-- cache hit under 500 ms
-- cache miss under 1.5 sec
-3. Concurrency safety for 200 simultaneous requests.
-4. Scalability for 500 baseline and 2000 peak users.
+Last synchronized with implementation: 2026-04-22
 
-## 2. NFR-to-Tactic Mapping
-| NFR | Tactic | Implementation |
+## 1. Target NFRs
+1. Availability consistency target: 99.99% for booking correctness path.
+2. Concurrency correctness: no double-booking for same slot.
+3. Performance target (service-level): create and list paths within acceptable UX budgets.
+4. Security: all external booking endpoints require authenticated access.
+
+## 2. NFR to tactic mapping
+| NFR | Tactic | Current implementation |
 |---|---|---|
-| Concurrency correctness | DB-enforced uniqueness | active slot unique index in booking_slots |
-| Latency | cache-aside | cache booking lists and booking detail views |
-| Throughput | pagination and bounded queries | list endpoints page_size cap |
-| Availability | stateless scaling | multiple booking-service replicas |
-| Security | strict authz | protect all user-specific and host-specific reads |
-| Reliability | transaction boundaries | booking + slot occupancy commit atomically |
+| Concurrency correctness | DB uniqueness + transaction | booking_slots active partial unique index and transactional writes |
+| Correctness under retry | idempotency key storage | idempotency_key column and unique index present |
+| Dependency resilience | fail-fast payment/listing adapters | create flow aborts on required dependency failures |
+| Security | gateway JWT + service checks | booking routes JWT-protected and ownership checks enforced |
+| Traceability | event + state history | BOOKING_* events and booking_status_history table |
 
-## 3. Performance Budgets
-Create booking (cache miss path):
-- validation and auth: 20-60 ms
-- listing snapshot fetch: 100-300 ms
-- transaction and slot inserts: 80-350 ms
-- event publish overhead: 10-80 ms
-- total target: <= 1.5 sec p95
+## 3. Performance budgets (planning baseline)
+Create booking path:
+- request validation/auth context: 20-80 ms
+- listing snapshot fetch: 100-350 ms
+- payment bridge: 100-500 ms
+- DB transaction and slot inserts: 80-350 ms
+- event publish: 10-80 ms
+- overall target: <= 1.5s p95 in local/staging conditions
 
-Booking list read:
-- cache hit <= 500 ms p95
-- cache miss <= 1.5 sec p95
+Booking read paths:
+- my bookings and host bookings target <= 1.5s p95
 
-## 4. Concurrency Tactics
-1. Use booking_slots active unique index to reject races.
-2. Keep create flow inside a single DB transaction.
-3. Use idempotency key in phase 2 to protect retries.
+## 4. Concurrency tactics
+1. active-slot unique index blocks overlapping reservations at write time.
+2. create booking uses single transaction for booking row + slot rows.
+3. cancellation flips occupancy_status to released so slots reopen safely.
 
-## 5. Security Tactics
-1. Remove public access to user-specific booking endpoints.
-2. Enforce ownership for guest and host list views.
-3. Restrict internal reserved-slot endpoint.
-4. Rate limit create/cancel/review endpoints.
+## 5. Security tactics
+1. JWT protection at gateway for /api/bookings/*.
+2. self/admin guard for /bookings/:user_id.
+3. guest/host ownership guard on cancel.
+4. optional internal token guard for reserved-slot endpoint.
 
-## 6. Scalability Tactics
-1. horizontally scale booking-service instances.
-2. optimize indexes for space_id and slot_start_utc paths.
-3. avoid N+1 queries in booking list APIs.
+## 6. Reliability and risk notes
+Risk: payment dependency outage can block booking create.
+- Mitigation: configurable enforcement mode and explicit failure path.
 
-## 7. Capacity Tests
-1. 200 concurrent create requests for same slot should yield one winner and conflict for others.
-2. mixed workload with 2000 users should keep p95 latency within budget.
+Risk: listing snapshot latency affects create latency.
+- Mitigation: strict validation scope and fail-fast behavior.
 
-## 8. Patterns
-Pattern 1: Slot-led reservation engine.
-Pattern 2: Lifecycle state machine for bookings.
-
-## 9. Risks and Mitigations
 Risk: high contention on hot listings.
-- Mitigation: precise indexes and conflict-aware UX messaging.
+- Mitigation: deterministic conflict handling and client-side retry UX.
 
-Risk: stale slot view due delayed invalidation.
-- Mitigation: event-driven invalidation and short TTL.
+## 7. Measured/validated status in current cycle
+- API E2E flow was validated for register/login/listing/slot/booking/conflict/payment/cancel/release.
+- Conflict behavior and cancellation slot release were observed as functioning.
 
-Risk: migration complexity from range to slot model.
-- Mitigation: additive rollout and compatibility mapping period.
+## 8. Residual gaps
+1. no formal load-test report attached in repository docs.
+2. no structured error code schema in API responses.
+3. review/completion lifecycle remains outside current implementation.
 
-## 10. Deep Analysis References
+## 9. References
 - ../design-principles-and-patterns-analysis.md
 - ../architectural-tactics-tradeoff-analysis.md

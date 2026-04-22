@@ -9,7 +9,7 @@ function formatDate(value) {
 function SubscriptionPage({ token, user }) {
   const [subscription, setSubscription] = useState(null);
   const [active, setActive] = useState(false);
-  const [planType, setPlanType] = useState('host_monthly');
+  const [planType, setPlanType] = useState('free');
   const [loading, setLoading] = useState(true);
   const [submitBusy, setSubmitBusy] = useState(false);
   const [notice, setNotice] = useState({ type: '', text: '' });
@@ -105,9 +105,9 @@ function SubscriptionPage({ token, user }) {
           <div className="field">
             <label htmlFor="plan_type">Plan Type</label>
             <select id="plan_type" value={planType} onChange={(event) => setPlanType(event.target.value)}>
-              <option value="host_monthly">Host Monthly</option>
-              <option value="host_quarterly">Host Quarterly</option>
-              <option value="host_yearly">Host Yearly</option>
+              <option value="free">Free</option>
+              <option value="basic">Basic</option>
+              <option value="pro">Pro</option>
             </select>
           </div>
 

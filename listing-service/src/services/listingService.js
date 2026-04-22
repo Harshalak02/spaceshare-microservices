@@ -2,9 +2,11 @@ const db = require('../models/db');
 const redis = require('../models/redis');
 const http = require('http');
 const { DateTime } = require('luxon');
+const { getPlan } = require('../strategies/PlanFactory');
 
 const SLOT_CACHE_TTL_SECONDS = Number(process.env.SLOT_CACHE_TTL_SECONDS || 30);
 const BOOKING_SERVICE_URL = process.env.BOOKING_SERVICE_URL || 'http://localhost:4004';
+const SUBSCRIPTION_SERVICE_URL = process.env.SUBSCRIPTION_SERVICE_URL || 'http://localhost:4005';
 const INTERNAL_HTTP_TIMEOUT_MS = Number(process.env.INTERNAL_HTTP_TIMEOUT_MS || 5000);
 
 function normalizeTime(value) {
@@ -65,6 +67,32 @@ async function createSpace(data) {
   const selectedTimezone = timezone || 'UTC';
   if (!isValidTimezone(selectedTimezone)) {
     throw new Error('Invalid timezone');
+  }
+
+  const planLookup = await fetchUserPlan(owner_id);
+  let plan;
+
+  if (planLookup.kind === 'plan') {
+    plan = getPlan(planLookup.plan);
+  } else if (planLookup.kind === 'none') {
+    const error = new Error('No subscription found for user');
+    error.code = 'NO_SUBSCRIPTION';
+    error.status = 402;
+    throw error;
+  } else {
+    console.warn(
+      `[listing-service] Subscription lookup failed for user=${owner_id}. Falling back to free plan.`,
+      planLookup.reason || planLookup.status || planLookup.error?.message || 'unknown_error'
+    );
+    plan = getPlan('free');
+  }
+
+  const currentCount = await countUserSpaces(owner_id);
+  if (currentCount >= plan.getListingLimit()) {
+    const error = new Error('Listing limit reached. Upgrade your plan.');
+    error.code = 'PLAN_LIMIT_REACHED';
+    error.status = 403;
+    throw error;
   }
 
   const result = await db.query(
@@ -364,6 +392,85 @@ async function fetchReservedSlots(spaceId, from, to) {
   const payload = await httpGetJson(requestOptions, INTERNAL_HTTP_TIMEOUT_MS);
 
   return payload?.reserved_slots || [];
+}
+
+async function countUserSpaces(ownerId) {
+  const result = await db.query('SELECT COUNT(*) FROM spaces WHERE owner_id = $1', [ownerId]);
+  return parseInt(result.rows[0].count, 10);
+}
+
+function normalizeSubscriptionPlanName(planName) {
+  if (typeof planName !== 'string') return null;
+
+  const normalized = planName.trim().toLowerCase();
+  if (normalized === 'free' || normalized === 'basic' || normalized === 'pro') {
+    return normalized;
+  }
+
+  if (normalized === 'host_monthly') return 'basic';
+  if (normalized === 'host_quarterly' || normalized === 'host_yearly') return 'pro';
+  return null;
+}
+
+async function fetchUserPlan(userId) {
+  const endpoint = new URL(`/me/${encodeURIComponent(userId)}`, SUBSCRIPTION_SERVICE_URL);
+
+  return new Promise((resolve) => {
+    const request = http.get(
+      {
+        protocol: endpoint.protocol,
+        hostname: endpoint.hostname,
+        port: endpoint.port || (endpoint.protocol === 'https:' ? 443 : 80),
+        path: `${endpoint.pathname}${endpoint.search}`,
+        headers: {
+          Accept: 'application/json'
+        }
+      },
+      (response) => {
+        let raw = '';
+        response.on('data', (chunk) => {
+          raw += chunk;
+        });
+
+        response.on('end', () => {
+          const statusCode = response.statusCode || 0;
+
+          if (statusCode === 404) {
+            resolve({ kind: 'none' });
+            return;
+          }
+
+          if (statusCode < 200 || statusCode >= 300) {
+            resolve({ kind: 'error', reason: 'bad_response', status: statusCode });
+            return;
+          }
+
+          try {
+            const payload = raw ? JSON.parse(raw) : {};
+            const rawPlan = payload?.plan || payload?.plan_type;
+            const plan = normalizeSubscriptionPlanName(rawPlan);
+
+            if (!plan) {
+              resolve({ kind: 'error', reason: 'unexpected_payload', payload });
+              return;
+            }
+
+            resolve({ kind: 'plan', plan });
+          } catch (error) {
+            resolve({ kind: 'error', reason: 'invalid_json', error });
+          }
+        });
+      }
+    );
+
+    request.setTimeout(INTERNAL_HTTP_TIMEOUT_MS, () => {
+      request.destroy(new Error(`timeout of ${INTERNAL_HTTP_TIMEOUT_MS}ms exceeded`));
+    });
+
+    request.on('error', (error) => {
+      resolve({ kind: 'error', reason: 'network', error });
+    });
+  });
 }
 
 function getWindowForDay(localDate, weeklyMap, overrideMap) {

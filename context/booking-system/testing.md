@@ -1,78 +1,70 @@
-# Booking System Test Plan (Hourly Slot Model)
+# Booking System Testing Guide
 
-## 1. Test Objectives
-1. Validate slot-based create/cancel lifecycle.
-2. Prove no double-booking under concurrent requests.
-3. Validate reservation export for listing slot timeline.
-4. Verify NFR latency and reliability goals.
+Last synchronized with implementation: 2026-04-22
 
-## 2. Unit Tests
-Targets:
-- start_slot_utc alignment validation
-- contiguous slot expansion
-- pricing by slot_count
-- state transition guards
+## 1. Test objectives
+1. Validate create/conflict/cancel lifecycle for slot-based bookings.
+2. Validate payment-to-booking integration behavior.
+3. Validate reservation export contract consumed by listing-service.
+4. Prevent regressions in auth and ownership checks.
 
-Examples:
-- start at 10:00 with slot_count 3 yields 10-13 window
-- start at 10:30 rejected
-- slot_count 0 rejected
+## 2. Unit test focus areas
+- request validation and payload normalization.
+- slot_count expansion and derived end slot logic.
+- status transition guard behavior.
+- cancellation metadata and slot release helper logic.
 
-## 3. Integration Tests
-1. Create booking inserts booking row and N slot rows.
-2. Duplicate slot request conflicts and rolls back.
-3. Cancel booking releases active occupancy.
-4. /internal/listings/:id/reserved-slots returns expected occupied windows.
+Representative cases:
+- slot_count must be positive integer.
+- malformed start_slot_utc rejected.
+- legacy range payload converts correctly to slot_count.
 
-## 4. Concurrency Tests
-### Hot slot race
-- fire 200 parallel create requests for same listing and start slot.
-- expected: 1 success, others BOOKING_CONFLICT.
+## 3. Integration test scenarios
+1. Create booking writes bookings + booking_slots rows.
+2. Conflicting create request fails with 409 conflict semantics.
+3. Cancel booking transitions to cancelled and releases active occupancy.
+4. Internal reserved-slot endpoint returns active reservations in range.
+5. PAYMENT_SUCCESS event updates status to confirmed when applicable.
 
-### Multi-slot overlap race
-- request [10-13] versus [11-12] parallel.
-- expected: exactly one request path succeeds.
+## 4. Security test scenarios
+1. /bookings/:user_id only accessible by self or admin.
+2. cancel allowed only for booking guest or host.
+3. internal endpoint rejects missing/invalid internal token when configured.
 
-## 5. Contract Tests
-1. listing snapshot contract from listing-service.
-2. reserved-slot export contract to listing-service.
-3. event payload contract for notification and analytics consumers.
+## 5. Contract test scenarios
+1. listing snapshot read contract from listing-service.
+2. reserved-slot response contract to listing-service.
+3. BOOKING_CREATED / BOOKING_CONFIRMED / BOOKING_CANCELLED event payload shape.
 
-## 6. End-to-End Tests
-1. Guest views available slots and books 2 contiguous slots.
-2. Slot becomes unavailable in listing calendar.
-3. Guest cancels and slot becomes available again.
-4. Booking completes and review submission succeeds.
-
-## 7. Performance and Load Tests
-Scenarios:
-1. 200 concurrent create attempts on hot slot.
-2. 2000 virtual users mixed reads/writes.
-
-Success criteria:
-- no double-booking in data
-- cache hit p95 < 500 ms
-- cache miss p95 < 1.5 sec
-
-## 8. Security Tests
-1. protected booking list endpoints cannot be read by other users.
-2. host-only booking endpoints validate listing ownership.
-3. internal reserved-slot endpoint restricted by service trust policy.
-
-## 9. Reliability Tests
-1. listing-service dependency timeout handling on create.
-2. Redis publish failure should not corrupt committed booking data.
-3. DB restart scenario recovery.
-
-## 10. Regression Suite
-Must always pass:
+## 6. End-to-end validation performed in current cycle
+Validated flows:
+- register and login
+- add listing
+- search listings and load slots
 - create booking
-- conflict booking
-- cancel booking
-- get my bookings
-- reserved-slot export
+- booking conflict check
+- payment session path
+- cancel booking and slot release
 
-## 11. Exit Criteria
-1. slot conflict safety proven in race tests.
-2. security gap on user-specific reads fully closed.
-3. slot timeline integration contract validated with listing-service.
+Validation notes:
+- Payment completion simulation was used; real provider settlement was intentionally excluded.
+- Notification flow was excluded from final requested E2E scope.
+
+## 7. Performance and resilience test backlog
+Planned:
+1. 200 parallel creates on same slot to assert one winner and deterministic conflicts.
+2. mixed 2000-user synthetic workload for p95 latency baselining.
+3. dependency failure matrix (listing timeout, payment error, Redis publish failure).
+
+## 8. Regression suite minimum
+Must remain green:
+- POST /book
+- POST /bookings/:booking_id/cancel
+- GET /bookings/my
+- GET /bookings/host/my
+- GET /internal/listings/:space_id/reserved-slots
+
+## 9. Known testing gaps
+1. No repository-checked load-test report artifact yet.
+2. No implemented review endpoint to include in regression.
+3. Completion/refund lifecycle not covered because API not implemented.

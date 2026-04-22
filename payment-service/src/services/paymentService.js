@@ -54,7 +54,14 @@ class PaymentService {
         } else {
             paymentRecord = result.rows[0];
             if (paymentRecord.status === 'succeeded') {
-                throw new Error('Payment already succeeded for this booking');
+                return {
+                    paymentId: paymentRecord.id,
+                    intentId: paymentRecord.provider_reference || `paid_${paymentRecord.id}`,
+                    clientSecret: null,
+                    status: paymentRecord.status,
+                    alreadyPaid: true,
+                    message: 'Payment already succeeded for this booking'
+                };
             }
         }
 

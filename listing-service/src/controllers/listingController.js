@@ -1,5 +1,13 @@
 const listingService = require('../services/listingService');
 
+const AMENITIES = [
+  { key: 'wifi', label: 'Wi-Fi' },
+  { key: 'parking', label: 'Parking' },
+  { key: 'ac', label: 'Air Conditioning' },
+  { key: 'projector', label: 'Projector' },
+  { key: 'coffee', label: 'Coffee' }
+];
+
 function toBoolean(value) {
   return value === true || value === 'true' || value === 1 || value === '1';
 }
@@ -32,6 +40,18 @@ async function create(req, res) {
     });
     res.status(201).json(space);
   } catch (error) {
+    if (error && error.code === 'NO_SUBSCRIPTION') {
+      return res.status(error.status || 402).json({
+        message: error.message,
+        code: 'NO_SUBSCRIPTION'
+      });
+    }
+    if (error && error.code === 'PLAN_LIMIT_REACHED') {
+      return res.status(error.status || 403).json({
+        message: error.message,
+        code: 'PLAN_LIMIT_REACHED'
+      });
+    }
     res.status(500).json({ message: 'Failed to create space', error: error.message });
   }
 }
@@ -52,6 +72,72 @@ async function getAll(req, res) {
     res.json(spaces);
   } catch (error) {
     res.status(500).json({ message: 'Failed to get spaces', error: error.message });
+  }
+}
+
+async function getAmenities(req, res) {
+  res.json(AMENITIES);
+}
+
+async function autocomplete(req, res) {
+  try {
+    const query = String(req.query.q || '').trim().toLowerCase();
+    if (!query) return res.json([]);
+
+    const spaces = await listingService.getAllSpaces();
+    const names = [...new Set(
+      spaces
+        .map((space) => space.location_name)
+        .filter(Boolean)
+        .filter((name) => String(name).toLowerCase().includes(query))
+    )];
+
+    res.json(names.slice(0, 8).map((name, index) => ({ id: index + 1, name })));
+  } catch (error) {
+    res.status(500).json({ message: 'Failed to autocomplete locations', error: error.message });
+  }
+}
+
+async function reverseGeocode(req, res) {
+  try {
+    const lat = Number(req.query.lat);
+    const lon = Number(req.query.lon);
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      return res.status(400).json({ message: 'lat and lon query params are required' });
+    }
+
+    const spaces = await listingService.getAllSpaces();
+    const candidates = spaces.filter((space) => (
+      Number.isFinite(Number(space.lat))
+      && Number.isFinite(Number(space.lon))
+      && Boolean(space.location_name)
+    ));
+
+    if (candidates.length === 0) {
+      return res.json({ location_name: `${lat.toFixed(4)}, ${lon.toFixed(4)}` });
+    }
+
+    let nearest = candidates[0];
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    for (const space of candidates) {
+      const dLat = Number(space.lat) - lat;
+      const dLon = Number(space.lon) - lon;
+      const distance = (dLat * dLat) + (dLon * dLon);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearest = space;
+      }
+    }
+
+    res.json({
+      location_name: nearest.location_name,
+      lat: Number(nearest.lat),
+      lon: Number(nearest.lon)
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Failed to reverse geocode location', error: error.message });
   }
 }
 
@@ -222,6 +308,9 @@ module.exports = {
   create,
   getById,
   getAll,
+  getAmenities,
+  autocomplete,
+  reverseGeocode,
   getMy,
   update,
   remove,

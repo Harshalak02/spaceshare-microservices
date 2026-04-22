@@ -6,6 +6,7 @@ function normalizeSubscription(sub) {
     id: sub.id,
     user_id: sub.user_id,
     plan: sub.plan_type,
+    plan_type: sub.plan_type,
     expiry_date: sub.expiry_date,
     created_at: sub.created_at
   };
@@ -50,6 +51,7 @@ async function getUserSubscription(req, res) {
 
     res.json({
       plan: subscription.plan_type,
+      plan_type: subscription.plan_type,
       user_id: subscription.user_id,
       subscription_id: subscription.id,
       expiry_date: subscription.expiry_date
@@ -60,4 +62,12 @@ async function getUserSubscription(req, res) {
   }
 }
 
-module.exports = { create, get, checkActive, getUserSubscription };
+async function getPlans(req, res) {
+  try {
+    res.json(service.getAvailablePlans());
+  } catch (error) {
+    res.status(500).json({ message: 'Failed to fetch plans', error: error.message });
+  }
+}
+
+module.exports = { create, get, checkActive, getUserSubscription, getPlans };

@@ -1,110 +1,95 @@
-# Listing System Detailed Design (Hourly Slot Model)
+# Listing System Detailed Design
 
-## 1. Design Goals
-1. Let hosts define working-hour windows for every weekday.
-2. Produce a reliable 1-hour slot calendar payload for guests.
-3. Keep availability logic deterministic and timezone-safe.
-4. Keep booking conflict responsibility in booking-service.
+Last synchronized with implementation: 2026-04-22
 
-## 2. Module Design
-### 2.1 Weekly Availability Module
+## 1. Design goals
+1. Keep host schedule authoring simple and deterministic.
+2. Generate slot timeline accurately across timezones.
+3. Reconcile schedule with reservations without duplicating booking ownership.
+4. Preserve backward compatibility with existing listing CRUD flow.
+
+## 2. Module design
+### 2.1 Space management module
 Responsibilities:
-- Persist rules per day of week.
-- Validate each rule:
-  - open_time < close_time
-  - both aligned to hour boundary
-  - slot_minutes fixed to 60
+- create/update/delete spaces with owner checks.
+- validate required fields and positive numeric constraints.
+- validate timezone values on create/update.
 
-### 2.2 Date Override Module
+### 2.2 Weekly availability module
 Responsibilities:
-- Persist per-date exceptions.
-- Support two modes:
-  - closed_all_day = true
-  - custom open/close window
+- enforce full 7-day payload for upsert.
+- enforce hour-aligned open and close times for open days.
+- persist one row per day via upsert semantics.
 
-Precedence:
-- override > weekly default.
-
-### 2.3 Timezone Module
+### 2.3 Override module
 Responsibilities:
-- Keep canonical timezone on listing.
-- Convert local schedule windows to UTC slot boundaries at query time.
-- Return both UTC and local timestamps for frontend rendering.
+- upsert date-specific windows or closed-all-day flags.
+- validate date format and time semantics.
+- delete override to return to weekly-default behavior.
 
-### 2.4 Slot Generator Module
-Input:
+### 2.4 Slot generation module
+Inputs:
 - listing timezone
-- weekly schedule
-- overrides
-- query range [from_date, to_date]
-
-Output:
-- ordered 1-hour candidate slots with status unavailable by default.
+- weekly rules map by day_of_week
+- override map by date_local
+- reserved slot set from booking-service
+- query range [from, to]
 
 Algorithm:
-1. For each date in range, determine active window using override/weekly rule.
-2. Split window into 60-minute boundaries.
-3. Mark all generated slots as candidate available.
-4. Remove or mark slots that overlap reserved slots from booking-service.
-5. Return final slot timeline.
+1. Validate date range and enforce max 31 days.
+2. For each date, choose window by override-first then weekly-fallback rule.
+3. Build one-hour slot boundaries in listing timezone.
+4. Convert slot boundaries to UTC and local timestamps.
+5. Mark slot status:
+- reserved if slot_start_utc appears in reserved-set
+- available otherwise
+6. Apply include_unavailable filter:
+- false: keep available only
+- true: include available and reserved
 
-### 2.5 Reservation Overlay Adapter
+### 2.5 Booking overlay adapter
 Responsibilities:
-- Query booking-service internal endpoint for reserved slots.
-- Merge reservation occupancy into generated slot timeline.
+- call booking internal reserved-slot API with timeout.
+- pass X-Internal-Token when configured.
+- propagate dependency errors to caller when fetch fails.
 
-### 2.6 Cache Module
-Cache keys:
-- slots:listing:{id}:from:{yyyy-mm-dd}:to:{yyyy-mm-dd}
-- availability:weekly:listing:{id}
-- availability:overrides:listing:{id}:month:{yyyy-mm}
+### 2.6 Cache module
+Cache key format:
+- slots:listing:{id}:from:{from}:to:{to}:all:{0|1}
 
-Invalidation triggers:
-- host updates schedule/override
-- booking created/cancelled/expired
+TTL:
+- SLOT_CACHE_TTL_SECONDS (default 30)
 
-## 3. Validation Rules
-1. Daily window must be within the same local date and hour-aligned.
-2. Window edges must align to hh:00.
-3. close_time cannot equal open_time for open day.
-4. max query range for slot endpoint in MVP: 31 days.
-5. timezone is mandatory on listing create/update.
-6. day_of_week uses 0..6 where 0=Sunday and 6=Saturday.
+Invalidation:
+- on listing update/delete.
+- on weekly availability and override changes.
 
-## 4. Endpoint Behavior
-### Update Weekly Availability
-- Replace full weekly definition in one request for consistency.
+## 3. Endpoint behavior
+### Weekly availability
+- GET returns timezone, slot_minutes, and sorted week rows.
+- PUT replaces all weekdays in one call.
 
-### Update Date Overrides
-- Upsert override for a date.
-- Delete override restores weekly behavior.
+### Date overrides
+- GET returns overrides optionally filtered by from/to.
+- PUT upserts one override by date_local.
+- DELETE removes one override by override id.
 
-### Get Slot Timeline
-- Accepts listing id and date range.
-- Returns slot objects sorted by start time.
-- Optional include_unavailable flag for richer UI.
+### Slots
+- GET /spaces/:id/slots requires from and to.
+- returns listing_id, timezone, slot_minutes, from, to, and slots.
 
-## 5. Security and Policy Design
-1. Only listing owner can update availability.
-2. Guest can read slot timeline for active listings.
-3. Admin can read/write for moderation and support operations.
+## 4. Security and policy
+1. Owner-only mutations for listing and availability endpoints.
+2. Through gateway deployment path, listing routes are JWT-protected.
+3. Service-direct public helper endpoints exist but are not the primary client path.
 
-## 6. Error Model
-Suggested codes:
-- AVAILABILITY_VALIDATION_ERROR
-- AVAILABILITY_RULE_CONFLICT
-- TIMEZONE_REQUIRED
-- SLOT_RANGE_TOO_LARGE
-- RESERVATION_DEPENDENCY_UNAVAILABLE
+## 5. Error and recovery behavior
+- validation errors return 400 with message and error details.
+- owner mismatch returns 403.
+- unknown listing returns 404.
+- dependency failures on reserved-slot fetch surface as slot read failure.
 
-## 7. Rollout Design
-1. Add timezone + availability tables first.
-2. Keep existing listing CRUD untouched.
-3. Ship host schedule endpoints.
-4. Ship slot timeline endpoint.
-5. Then ship frontend calendar components.
-
-## 8. Open Decisions
-1. Should hosts be forced to configure all 7 days in one call?
-2. Should slot timeline include unavailable slots by default?
-3. Should buffer time between bookings be in MVP or phase 2?
+## 6. Known design gaps
+1. No explicit event-driven slot-cache invalidation on booking events in listing-service.
+2. No overnight window support.
+3. Slot status currently limited to available/reserved in emitted payload.

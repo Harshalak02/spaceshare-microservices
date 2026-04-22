@@ -1,85 +1,87 @@
-# Booking System Implementation Roadmap (Hourly Slot Model)
+# Booking System Roadmap and Status
+
+Last synchronized with implementation: 2026-04-22
 
 ## 1. Objective
-Deliver slot-safe hourly reservation flow with booking-platform behavior.
+Keep booking flow stable and conflict-safe while completing remaining lifecycle and quality gaps.
 
-## 2. Phases
-### Phase B1: Security and Contract Baseline (3-4 days)
-Deliverables:
-- protect all booking read endpoints
-- define listing snapshot and reserved-slot internal contracts
+## 2. Phase status
+### Phase B1: Security and route baseline
+Status: Completed
 
-Acceptance:
-- no public user booking data exposure
+Delivered:
+- JWT-protected booking routes through gateway.
+- Ownership checks for sensitive reads and cancel operations.
+- Internal reserved-slot endpoint token guard support.
 
-### Phase B2: Slot-Based Create Flow (1 week)
-Deliverables:
-- create API supports start_slot_utc + slot_count
-- request validation and contiguous slot expansion
-- pricing by slot_count
+### Phase B2: Slot-based create flow
+Status: Completed
 
-Acceptance:
-- successful hourly multi-slot booking flow
+Delivered:
+- start_slot_utc + slot_count create path.
+- legacy start_time/end_time compatibility mapping.
+- pricing snapshot columns persisted with booking.
 
-### Phase B3: Slot Occupancy Persistence (1 week)
-Deliverables:
-- booking_slots table and unique active slot index
-- transactional booking + slot insert flow
-- conflict-safe rollback path
+### Phase B3: Slot occupancy persistence and conflict control
+Status: Completed
 
-Acceptance:
-- no double booking under race tests
+Delivered:
+- booking_slots table with active unique slot index.
+- transactional booking + slot writes.
+- deterministic conflict rollback path.
 
-### Phase B4: Cancellation and Lifecycle (4-5 days)
-Deliverables:
-- cancel endpoint with status transition
-- release slot occupancy on cancellation
-- completion transition and review eligibility
+### Phase B4: Cancellation lifecycle
+Status: Completed (core), Partial (extended lifecycle)
 
-Acceptance:
-- cancelled bookings reopen slots for availability timeline
+Delivered:
+- cancel endpoint implemented.
+- status transition and cancellation metadata persistence.
+- slot occupancy release on cancel.
 
-### Phase B5: Performance and Scale Hardening (4-5 days)
-Deliverables:
-- cache tuning for booking list reads
-- load tests for 200 concurrent and 2000 peak users
-- observability dashboards and alerts
+Remaining:
+- explicit completion/refund API transitions.
+- review flow activation.
 
-Acceptance:
-- latency targets achieved in test report
+### Phase B5: Payment integration hardening
+Status: Completed (baseline)
 
-### Phase B6: Frontend and Calendar Integration (1 week)
-Deliverables:
-- frontend booking payload migration to slot_count model
-- end-to-end with listing calendar slot selection
+Delivered:
+- booking create payment bridge integration.
+- PAYMENT_SUCCESS event handling to confirm booking status.
+- idempotency-safe payment create-session behavior on already-paid booking (in payment-service).
 
-Acceptance:
-- guest selects slots in calendar and booking succeeds end-to-end
+Remaining:
+- expanded failure policy matrix and retry telemetry.
 
-## 3. Dependencies
-- listing-service must deliver slot timeline from schedule + reserved slots.
-- gateway auth and rate limiting apply to all booking routes.
+### Phase B6: E2E and UI integration
+Status: Completed (current cycle)
 
-## 4. Risks
-1. high contention on popular times
-- Mitigation: DB uniqueness + clear conflict UX messaging
+Delivered:
+- end-to-end flow validated: register/login/add listing/search/slots/booking/conflict/payment/cancel/release.
+- frontend booking success notice persistence improved after slot refresh.
 
-2. migration complexity from legacy range payloads
-- Mitigation: temporary compatibility mapping and phased deprecation
+## 3. Current dependencies
+- listing-service for listing snapshot on create.
+- payment-service for charge/session processing.
+- Redis for event publish/subscribe integration.
+- api-gateway for JWT enforcement.
 
-3. stale timeline due event delay
-- Mitigation: event invalidation plus short cache TTL
+## 4. Near-term backlog
+1. Add review endpoint and review storage model.
+2. Add completion transition API and automated completion scheduler.
+3. Add structured error codes across booking APIs.
+4. Add formal load-test artifact in docs.
 
-## 5. Milestone Checklist
-- [ ] B1 secure contract baseline done
-- [ ] B2 slot create API done
-- [ ] B3 slot occupancy safety done
-- [ ] B4 lifecycle and cancellation done
-- [ ] B5 NFR hardening done
-- [ ] B6 frontend integration done
+## 5. Milestone checklist
+- [x] B1 security baseline
+- [x] B2 slot create path
+- [x] B3 slot occupancy conflict safety
+- [x] B4 cancel and slot release
+- [x] B5 payment bridge baseline
+- [x] B6 integrated E2E validation
 
-## 6. Course Deliverable Mapping
-- Task 1: slot-based subsystem requirements and ASRs
-- Task 2: updated stakeholder concerns and ADR decisions
-- Task 3: tactics/patterns for concurrency and latency
-- Task 4: nontrivial prototype path (calendar slot selection -> booking -> occupancy update)
+## 6. Course deliverable mapping
+- Task 1: subsystem requirements and ASRs represented by slot-safe booking model.
+- Task 2: ADR and stakeholder updates captured in folder docs.
+- Task 3: concurrency and reliability tactics implemented through DB/index/transaction design.
+- Task 4: non-trivial prototype path validated end-to-end with real services.

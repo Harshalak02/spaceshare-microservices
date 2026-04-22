@@ -1,89 +1,109 @@
-# Booking System ADRs (Hourly Slot Model)
+# Booking System ADRs
 
-## ADR-B1: Booking Request Uses start_slot_utc Plus slot_count
-- Status: Proposed
+Last synchronized with implementation: 2026-04-22
+
+## ADR-B1: Canonical Slot-Based Create Payload
+- Status: Accepted (implemented)
 - Date: 2026-04-22
 
 ### Context
-Range-based start/end inputs are less explicit for fixed 1-hour booking UX.
+Hourly reservations are clearer with explicit slot semantics than free-form ranges.
 
 ### Decision
-Primary create API will use start_slot_utc and slot_count.
+Use start_slot_utc + slot_count as canonical create input.
 
 ### Consequences
 Positive:
-- explicit slot semantics
-- simpler validation and pricing
+- pricing and capacity checks are straightforward.
+- slot expansion is deterministic.
 
 Negative:
-- client migration needed for older payload format
+- legacy clients needed compatibility support.
 
-## ADR-B2: Persist Slot Occupancy in booking_slots Table
-- Status: Proposed
+Implementation note:
+- start_time/end_time payload remains accepted and converted.
+
+## ADR-B2: Slot Occupancy as First-Class Table
+- Status: Accepted (implemented)
 - Date: 2026-04-22
 
 ### Context
-App-level overlap checks can fail under high concurrency if not hardened.
+Range-only overlap logic is less reliable under race conditions.
 
 ### Decision
-Use booking_slots rows with active unique index on (space_id, slot_start_utc).
+Persist one booking_slots row per reserved hour and enforce unique active slots per listing.
 
 ### Consequences
 Positive:
-- strong DB-level conflict guarantee
-- deterministic race outcomes
+- deterministic conflict handling under concurrent writes.
 
 Negative:
-- additional write amplification (one row per slot)
+- higher write volume proportional to slot_count.
 
-## ADR-B3: Require Contiguous Multi-Slot Bookings in MVP
-- Status: Proposed
+## ADR-B3: Contiguous Slot Expansion in MVP
+- Status: Accepted (implemented)
 - Date: 2026-04-22
 
 ### Context
-Calendly-like UX is simpler with contiguous selection.
+Product flow and UI use contiguous hour blocks.
 
 ### Decision
-slot_count always expands to contiguous slots from start slot.
+slot_count expands from start_slot_utc in contiguous 60-minute increments.
 
 ### Consequences
 Positive:
-- easier UX and simpler backend logic
+- simple UX and consistent pricing.
 
 Negative:
-- cannot create disjoint multi-window booking in one request
+- disjoint slot bundles require multiple bookings.
 
-## ADR-B4: Expose Reserved Slots via Internal Booking Endpoint
-- Status: Proposed
+## ADR-B4: Internal Reserved-Slot Export
+- Status: Accepted (implemented)
 - Date: 2026-04-22
 
 ### Context
-Listing-service needs reservation occupancy to render availability timeline.
+listing-service needs reservation truth to reconcile generated candidate slots.
 
 ### Decision
-Provide internal endpoint for reserved slots by listing and date range.
+Expose internal endpoint for reserved slots by listing and date range.
 
 ### Consequences
 Positive:
-- clear service boundary
-- listing calendar remains accurate
+- clear ownership boundary between schedule rules and occupancy truth.
 
 Negative:
-- introduces read dependency from listing-service to booking-service
+- listing slot reads depend on booking-service availability/latency.
 
-## ADR-B5: Keep Booking Platform Features with Hourly Semantics
-- Status: Proposed
+## ADR-B5: Payment Attempt Before Booking Persistence
+- Status: Accepted (implemented)
 - Date: 2026-04-22
 
 ### Context
-Product should still feel like a booking platform, just hourly.
+Booking rows should not be committed when payment is strictly required and fails.
 
 ### Decision
-Retain lifecycle, cancellation/refund policy, and post-completion reviews.
+booking-service calls payment bridge before transaction commit path.
 
 ### Consequences
 Positive:
-- consistent business behavior across platform
+- avoids dangling unpaid bookings in strict mode.
 
 Negative:
-- policy and test complexity increases
+- create latency includes payment dependency.
+
+## ADR-B6: Keep Review Endpoint Out of Current Scope
+- Status: Deferred (not implemented)
+- Date: 2026-04-22
+
+### Context
+Current routes and service logic prioritize booking/cancel/payment-safe flow.
+
+### Decision
+Do not expose review create endpoint until completion lifecycle is fully implemented.
+
+### Consequences
+Positive:
+- reduced scope and lower risk while stabilizing booking/payment integration.
+
+Negative:
+- post-stay review capability is unavailable in current release.

@@ -29,12 +29,14 @@ services:
     environment:
       REDIS_URL: redis://redis:6379
       BOOKING_SERVICE_URL: http://booking-service:4004
+      SUBSCRIPTION_SERVICE_URL: http://subscription-service:4005
       INTERNAL_SERVICE_TOKEN: spaceshare-internal-token
     ports:
       - '4002:4002'
     depends_on:
       - redis
       - booking-service
+      - subscription-service
     restart: unless-stopped
 
   search-service:

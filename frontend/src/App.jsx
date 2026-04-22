@@ -42,15 +42,24 @@ function App() {
     }
   }, []);
 
+  useEffect(() => {
+    if (!user) return;
+
+    const hostOnlyPages = new Set(['subscription', 'hostbookings', 'add', 'my']);
+    if (user.role !== 'host' && hostOnlyPages.has(page)) {
+      setPage('search');
+    }
+  }, [user, page]);
+
   const navItems = useMemo(() => {
     const items = [
       { key: 'search', label: 'Search Spaces' },
-      { key: 'mybookings', label: 'My Bookings' },
-      { key: 'subscription', label: 'Subscription' }
+      { key: 'mybookings', label: 'My Bookings' }
     ];
 
     if (user?.role === 'host') {
       items.push(
+        { key: 'subscription', label: 'Subscription' },
         { key: 'hostbookings', label: 'Host Bookings' },
         { key: 'add', label: 'Add Space' },
         { key: 'my', label: 'My Listings' }
@@ -85,7 +94,7 @@ function App() {
   function renderPage() {
     if (page === 'search') return <SearchPage token={token} user={user} />;
     if (page === 'mybookings') return <MyBookingsPage token={token} user={user} />;
-    if (page === 'subscription') return <SubscriptionPage token={token} user={user} />;
+    if (page === 'subscription' && user?.role === 'host') return <SubscriptionPage token={token} user={user} />;
     if (page === 'hostbookings') return <HostBookingsPage token={token} user={user} />;
     if (page === 'add') return <AddSpacePage token={token} user={user} />;
     if (page === 'my') return <MyListingsPage token={token} user={user} />;

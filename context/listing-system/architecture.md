@@ -1,129 +1,79 @@
-# Listing System Architecture Plan (Hourly Slot Model)
+# Listing System Architecture
+
+Last synchronized with implementation: 2026-04-22
 
 ## 1. Scope
-This plan defines a slot-first Listing architecture for SpaceShare, focused on small hourly bookings.
+listing-service owns space metadata and host-configured availability rules for hourly bookings.
 
-Product model:
-- Bookings are in fixed 1-hour slots.
-- Users can book multiple contiguous slots.
-- Hosts define daily availability windows for each weekday (example: 06:00 to 22:00).
-- Guests view available slots in a calendar-style UI.
+Current functional surface:
+- space CRUD with owner controls.
+- weekly availability management.
+- date override management.
+- slot timeline generation with reservation overlay from booking-service.
+- helper endpoints for amenities and location assistance.
 
-## 2. Core Assumptions
-1. Slot size is fixed at 60 minutes for MVP.
-2. All availability is evaluated in listing timezone, then returned in UTC + display timezone.
-3. Weekly schedule plus date overrides define supply.
-4. Overnight windows (example 22:00 to 02:00) are out of MVP.
-5. Search discovery keeps existing behavior; slot visibility is an additional read path.
-6. Slot timeline range is capped (31 days in MVP) to protect performance.
+## 2. Bounded context ownership
+- listing-service: metadata + schedule rules + slot generation orchestration.
+- booking-service: reservation truth and occupied slots.
+- api-gateway: JWT enforcement for /api/listings routes.
 
-## 3. Current State Gap Summary
-Current listing-service supports only listing CRUD and basic metadata. Missing for slot-first design:
-- No weekly availability model.
-- No date override model.
-- No timezone field on listing.
-- No calendar slot query endpoint.
-- No host schedule workflow.
+## 3. Implemented architecture components
+1. Listing core component
+- create/read/update/delete spaces and publish LISTING_* events.
 
-## 4. Architecturally Significant Requirements
-### Functional
-1. Host can define opening and closing times for each weekday.
-2. Host can add date-level overrides (closed day or special hours).
-3. Guest can fetch available 1-hour slots for a date range.
-4. Availability must reflect booked slots in near real time.
+2. Availability rules component
+- listing_weekly_availability CRUD by owner.
+- listing_availability_overrides CRUD by owner.
 
-### Non-functional
-1. Cache hit for slot queries under 500 ms.
-2. Cache miss for slot queries under 1.5 sec.
-3. 99.99% availability target for listing APIs.
-4. Scalable to 500 baseline and 2000 peak users.
+3. Slot generation engine
+- derives day windows from override-first, weekly-fallback policy.
+- converts listing timezone windows into UTC/local slot payload.
 
-## 5. Bounded Context and Ownership
-- Listing-service owns listing metadata and availability rules.
-- Booking-service owns reservations and final occupancy.
-- Slot availability for guest UI is a composed view:
-  - listing rules from listing-service
-  - booked slots from booking-service
+4. Reservation overlay adapter
+- fetches reserved slots from booking-service internal endpoint.
+- marks generated slots as reserved when overlap is present.
 
-## 6. Target Components
-1. Listing Core Module
-- Existing listing CRUD, lifecycle, moderation.
+5. Slot caching component
+- Redis cache-aside with listing/date-range keying and short TTL.
 
-2. Availability Rules Module
-- Weekly schedule per listing and weekday.
-- Date-level overrides.
+## 4. Runtime flows
+### Flow A: Host updates weekly schedule
+1. Owner calls PUT /spaces/:id/availability/weekly.
+2. Service validates complete 7-day payload and time alignment.
+3. Service stores weekly rows in transaction and updates listing timezone if provided.
+4. Service invalidates slot cache for that listing.
 
-3. Slot Generation Module
-- Generates 1-hour candidate slots for a date range from rules.
+### Flow B: Host manages date overrides
+1. Owner calls PUT or DELETE override endpoint.
+2. Service validates date and window semantics.
+3. Service upserts/deletes override row.
+4. Service invalidates slot cache.
 
-4. Slot Reconciliation Module
-- Removes occupied slots using booking-service reserved slots.
+### Flow C: Client reads slot timeline
+1. Client calls GET /spaces/:id/slots with from/to.
+2. Service checks cache.
+3. On miss, service loads weekly + override rules.
+4. Service requests reserved slots from booking-service internal API.
+5. Service generates slots and applies reserved status overlay.
+6. Service stores response in cache and returns payload.
 
-5. Calendar Query API
-- Returns slot timeline payload for Google Calendar / Calendly-like UI.
+## 5. Consistency model
+- Schedule writes are strongly consistent in listing DB.
+- Slot timeline is composed at read-time and cached.
+- Current cache invalidation is triggered by listing mutations.
+- Booking events do not currently trigger direct listing cache invalidation; freshness relies on short TTL.
 
-6. Cache Layer
-- Redis cache for slot timeline responses and host schedule reads.
+## 6. Security boundaries
+- Through gateway, all listing endpoints are authenticated.
+- Within listing-service itself, owner-only writes are enforced by auth middleware + ownership checks.
+- Helper/public route behavior exists at service layer but is typically consumed behind gateway auth.
 
-## 7. Runtime Flow
-### Flow A: Host Configures Weekly Availability
-1. Host updates weekly schedule for listing.
-2. Listing-service validates window constraints.
-3. Rules persist in DB.
-4. Slot cache invalidated for affected listing/date windows.
+## 7. Reliability and dependency behavior
+- Reservation overlay call uses configurable HTTP timeout.
+- Booking dependency errors propagate as slot endpoint failures.
+- Cache unavailability does not bypass DB/booking logic but can increase latency.
 
-### Flow B: Guest Loads Calendar Slots
-1. Client calls slot timeline endpoint for listing and date range.
-2. Listing-service loads weekly rules + overrides.
-3. Listing-service fetches reserved slots from booking-service internal API.
-4. Slot generator returns 1-hour available slots.
-5. Response cached for short TTL.
-
-### Flow C: Booking Created or Cancelled
-1. Booking-service commits reservation.
-2. Booking-service emits BOOKING_* event.
-3. Listing-service (or cache invalidation worker) invalidates slot cache keys.
-
-## 8. Availability Rule Model
-For each listing:
-- Monday to Sunday each has is_open, open_time_local, close_time_local.
-- Date overrides support:
-  - fully blocked date
-  - custom open/close window for that date
-
-Weekday mapping convention:
-- day_of_week = 0..6 where 0=Sunday and 6=Saturday.
-
-Priority order:
-- date override first
-- then weekly default
-
-## 9. Calendar Response Shape
-Slot payload fields:
-- slot_start_utc
-- slot_end_utc
-- slot_start_local
-- slot_end_local
-- status: available | reserved | unavailable
-- reason (optional)
-
-## 10. Reliability and Consistency Strategy
-- Source-of-truth consistency in listing DB for schedule rules.
-- Eventual consistency for cache invalidation after bookings.
-- Short TTL cache fallback to bound stale data risk.
-
-## 11. Architectural Patterns and Tactics
-Patterns:
-- Rule-based schedule generation.
-- Composed read model (availability rules + reservations).
-
-Tactics:
-- Cache-aside for slot timeline reads.
-- Dependency timeout and fallback handling for booking-service queries.
-- Structured observability on slot generation path.
-
-## 12. Out of Scope for MVP
-- Variable slot sizes.
-- Overnight availability windows.
-- Multi-timezone host schedules for a single listing.
-- Recurrence exceptions beyond date-level override.
+## 8. Known limitations
+- Slot statuses currently emitted as available or reserved only.
+- No event-driven cache invalidation on BOOKING_CREATED/BOOKING_CANCELLED in listing-service.
+- No support for overnight windows or variable slot duration in current implementation.

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { apiRequest } from '../services/api';
+import PaymentModal from '../components/PaymentModal';
 
 const WEEKDAY_LABELS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -149,6 +150,8 @@ function SearchPage({ token }) {
   const [selectedSlotsBySpace, setSelectedSlotsBySpace] = useState({});
   const [bookingDraftBySpace, setBookingDraftBySpace] = useState({});
   const [bookingBusyBySpace, setBookingBusyBySpace] = useState({});
+  const [paymentSession, setPaymentSession] = useState(null);
+  const [paymentBusy, setPaymentBusy] = useState(false);
 
   const resultSummary = useMemo(() => {
     if (!spaces.length) return 'No spaces loaded yet.';
@@ -251,10 +254,13 @@ function SearchPage({ token }) {
     }));
   }
 
-  async function loadSlots(spaceId) {
+  async function loadSlots(spaceId, options = {}) {
+    const { preserveNotice = false } = options;
     const query = getSlotQuery(spaceId);
     setSlotsLoadingBySpace((prev) => ({ ...prev, [spaceId]: true }));
-    setNotice({ type: '', text: '' });
+    if (!preserveNotice) {
+      setNotice({ type: '', text: '' });
+    }
 
     try {
       const payload = await apiRequest(
@@ -372,10 +378,12 @@ function SearchPage({ token }) {
     const slotCount = selectedSlots.length;
     const guestCount = Number(draft.guest_count || 1);
     const startSlotUtc = selectedSlots[0];
+    const selectedSpace = spaces.find((space) => Number(space.id) === Number(spaceId));
+    const fallbackAmount = Number(selectedSpace?.price_per_hour || 0) * slotCount;
 
     setBookingBusyBySpace((prev) => ({ ...prev, [spaceId]: true }));
     try {
-      await apiRequest('/bookings/book', {
+      const booking = await apiRequest('/bookings/book', {
         method: 'POST',
         token,
         body: {
@@ -388,13 +396,77 @@ function SearchPage({ token }) {
       });
 
       setNotice({ type: 'success', text: `Booking created for ${slotCount} slot${slotCount === 1 ? '' : 's'}.` });
-      await loadSlots(spaceId);
+
+      try {
+        const paymentResponse = await apiRequest('/payments/create-session', {
+          method: 'POST',
+          token,
+          body: {
+            booking_id: booking.id,
+            amount: Number(booking?.total_amount || fallbackAmount || 0)
+          }
+        });
+
+        if (paymentResponse?.alreadyPaid) {
+          setNotice({ type: 'success', text: 'Booking created and payment is already marked as succeeded.' });
+        } else if (paymentResponse?.intentId) {
+          const clientSecret = paymentResponse.clientSecret || '';
+          const mockSession = String(clientSecret).startsWith('mock_secret_')
+            || String(paymentResponse.intentId).startsWith('mock_pi_');
+
+          setPaymentSession({
+            bookingId: booking.id,
+            amount: Number(booking?.total_amount || fallbackAmount || 0),
+            intentId: paymentResponse.intentId,
+            clientSecret,
+            isMock: mockSession
+          });
+          setNotice({ type: 'info', text: 'Booking created. Complete payment in the popup window.' });
+        }
+      } catch (paymentError) {
+        setNotice({
+          type: 'error',
+          text: `Booking created, but payment session could not be opened: ${paymentError.message}`
+        });
+      }
+
+      await loadSlots(spaceId, { preserveNotice: true });
       setSelectedSlotsBySpace((prev) => ({ ...prev, [spaceId]: [] }));
     } catch (error) {
       setNotice({ type: 'error', text: `Booking failed: ${error.message}` });
     } finally {
       setBookingBusyBySpace((prev) => ({ ...prev, [spaceId]: false }));
     }
+  }
+
+  function closePaymentModal() {
+    if (paymentBusy) return;
+    setPaymentSession(null);
+  }
+
+  async function completeMockPayment() {
+    if (!paymentSession?.intentId) return;
+
+    setPaymentBusy(true);
+    try {
+      await apiRequest('/payments/simulate-success', {
+        method: 'POST',
+        token,
+        body: { intentId: paymentSession.intentId }
+      });
+
+      setNotice({ type: 'success', text: 'Payment completed successfully.' });
+      setPaymentSession(null);
+    } catch (error) {
+      setNotice({ type: 'error', text: `Payment confirmation failed: ${error.message}` });
+    } finally {
+      setPaymentBusy(false);
+    }
+  }
+
+  function handleStripePaymentSuccess() {
+    setNotice({ type: 'success', text: 'Payment completed successfully.' });
+    setPaymentSession(null);
   }
 
   return (
@@ -679,7 +751,12 @@ function SearchPage({ token }) {
                       onClick={() => createBooking(space.id)}
                       disabled={bookingBusyBySpace[space.id] || slotCount === 0}
                     >
-                      {bookingBusyBySpace[space.id] ? 'Booking...' : `Book ${slotCount || ''} Slot${slotCount === 1 ? '' : 's'}`}
+                      {bookingBusyBySpace[space.id] ? (
+                        <span className="btn-with-spinner">
+                          <span className="btn-spinner" aria-hidden="true" />
+                          Booking in progress...
+                        </span>
+                      ) : `Book ${slotCount} Slot${slotCount === 1 ? '' : 's'}`}
                     </button>
                   </div>
                 </div>
@@ -688,6 +765,19 @@ function SearchPage({ token }) {
           </article>
         );
       })}
+
+      {paymentSession ? (
+        <PaymentModal
+          amount={paymentSession.amount}
+          intentId={paymentSession.intentId}
+          clientSecret={paymentSession.clientSecret}
+          isMock={paymentSession.isMock}
+          paymentBusy={paymentBusy}
+          onMockPayment={completeMockPayment}
+          onPaymentSuccess={handleStripePaymentSuccess}
+          onCancel={closePaymentModal}
+        />
+      ) : null}
     </div>
   );
 }

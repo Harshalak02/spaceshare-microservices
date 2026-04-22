@@ -1,77 +1,76 @@
-# Listing System Implementation Roadmap (Hourly Slot Model)
+# Listing System Roadmap and Status
+
+Last synchronized with implementation: 2026-04-22
 
 ## 1. Objective
-Deliver host schedule management and guest slot timeline support for 1-hour booking intervals.
+Maintain stable slot-aware listing behavior while improving freshness, reliability, and documentation accuracy.
 
-## 2. Phases
-### Phase L1: Availability Foundation (1 week)
-Deliverables:
-- add timezone and availability tables
-- weekly schedule endpoints
-- override endpoints
+## 2. Phase status
+### Phase L1: Availability foundation
+Status: Completed
 
-Acceptance:
-- host can configure 06:00 to 22:00 style daily windows
+Delivered:
+- timezone and slot_minutes support in spaces.
+- weekly availability table and endpoints.
+- date override table and endpoints.
 
-### Phase L2: Slot Timeline Engine (1 week)
-Deliverables:
-- slot generation module (60-minute fixed intervals)
-- public slot timeline endpoint
-- date-range limit enforcement
+### Phase L2: Slot timeline engine
+Status: Completed
 
-Acceptance:
-- calendar API returns deterministic slots by date range
+Delivered:
+- dynamic one-hour slot generation.
+- date-range validation with 31-day cap.
+- timezone-aware local and UTC slot payload fields.
 
-### Phase L3: Reservation Overlay Integration (4-5 days)
-Deliverables:
-- booking-service reserved-slot adapter
-- composed availability response
-- cache invalidation events wiring
+### Phase L3: Reservation overlay integration
+Status: Completed (baseline)
 
-Acceptance:
-- booked slots disappear from guest slot timeline
+Delivered:
+- booking-service reserved-slot adapter.
+- status overlay (available/reserved) in slot timeline.
 
-### Phase L4: Performance and Hardening (4-5 days)
-Deliverables:
-- slot timeline caching
-- load test and optimization
-- error budgets and alerting hooks
+Remaining:
+- event-driven cache invalidation on booking create/cancel.
 
-Acceptance:
-- cache hit under 500 ms, cache miss under 1.5 sec in test runs
+### Phase L4: Performance and hardening
+Status: In progress
 
-### Phase L5: Frontend Calendar UX (1 week)
-Deliverables:
-- host weekly schedule UI
-- override management UI
-- guest calendly-like slot picker integration
+Delivered:
+- Redis slot caching with configurable TTL.
 
-Acceptance:
-- full host setup and guest slot browsing workflow works end-to-end
+Remaining:
+- formal load/performance report artifacts.
+- deeper timeout/retry/error-budget dashboards.
+
+### Phase L5: Frontend integration
+Status: Completed (core booking/search flow)
+
+Delivered:
+- search and slot-picker flow integrated with listing slot endpoint.
+- E2E flow validated with booking creation and cancellation impact.
+
+Remaining:
+- full host schedule management UI maturity enhancements.
 
 ## 3. Dependencies
-- booking-service must expose reserved slots for listing/date range.
-- gateway rate limiting and auth flow remains unchanged.
+- booking-service internal reserved-slot endpoint availability.
+- api-gateway auth policy for listing route family.
+- Redis for cache storage.
 
-## 4. Risks
-1. timezone handling bugs
-- Mitigation: central timezone utility + DST tests
+## 4. Near-term backlog
+1. Consume booking events in listing-service for proactive slot cache invalidation.
+2. Add explicit reliability fallback strategy for booking overlay dependency failures.
+3. Add benchmark and soak-test results to repository docs.
 
-2. stale slot cache
-- Mitigation: short TTL and booking event invalidation
+## 5. Milestone checklist
+- [x] L1 availability schema and APIs
+- [x] L2 slot engine
+- [x] L3 reservation overlay baseline
+- [ ] L4 full NFR hardening
+- [x] L5 integrated slot flow in frontend
 
-3. inter-service dependency latency
-- Mitigation: strict timeout budgets and retry policy
-
-## 5. Milestone Checklist
-- [ ] L1 availability schema and API done
-- [ ] L2 slot engine done
-- [ ] L3 reservation overlay done
-- [ ] L4 NFR tuning done
-- [ ] L5 frontend calendar flow done
-
-## 6. Course Deliverable Mapping
-- Task 1: subsystem and ASR coverage through slot model
-- Task 2: stakeholder and ADR updates for schedule ownership
-- Task 3: tactics and pattern implementation on availability engine
-- Task 4: end-to-end nontrivial flow (host schedule -> guest slot view -> booking impact)
+## 6. Course deliverable mapping
+- Task 1: listing subsystem and ASR coverage through slot model docs.
+- Task 2: ADR/stakeholder alignment captured in architecture artifacts.
+- Task 3: tactics and pattern application for composed read model.
+- Task 4: non-trivial flow validated end-to-end with booking impact on slots.

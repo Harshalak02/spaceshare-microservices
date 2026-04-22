@@ -1,8 +1,8 @@
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import { loadStripe } from '@stripe/stripe-js';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
-const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLIC_KEY || 'pk_test_PLACEHOLDER_KEY_HERE');
+const stripePublishableKey = import.meta.env.VITE_STRIPE_PUBLIC_KEY;
 
 function CheckoutForm({ onPaymentSuccess, onCancel }) {
   const stripe = useStripe();
@@ -19,50 +19,108 @@ function CheckoutForm({ onPaymentSuccess, onCancel }) {
 
     const { error, paymentIntent } = await stripe.confirmPayment({
       elements,
-      redirect: 'if_required', // since it's a SPA we want to handle success without redirecting if possible
+      redirect: 'if_required'
     });
 
     if (error) {
       setMessage(error.message);
     } else if (paymentIntent && paymentIntent.status === 'succeeded') {
-      setMessage("Payment Successful!");
+      setMessage('Payment successful.');
       onPaymentSuccess();
     } else {
-      setMessage("Unexpected state or requires further action.");
+      setMessage('Payment requires additional action.');
     }
 
     setIsProcessing(false);
   };
 
   return (
-    <form onSubmit={handleSubmit} style={{ marginTop: 16 }}>
+    <form onSubmit={handleSubmit} className="payment-form">
       <PaymentElement />
-      <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
-        <button disabled={isProcessing || !stripe || !elements} type="submit" style={{ padding: '8px 16px', background: '#007bff', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer' }}>
-          {isProcessing ? "Processing..." : "Pay Now"}
+      <div className="btn-row" style={{ marginTop: '0.75rem' }}>
+        <button className="btn btn-primary" disabled={isProcessing || !stripe || !elements} type="submit">
+          {isProcessing ? (
+            <span className="btn-with-spinner">
+              <span className="btn-spinner" aria-hidden="true" />
+              Processing...
+            </span>
+          ) : 'Pay Now'}
         </button>
-        <button type="button" onClick={onCancel} style={{ padding: '8px 16px', background: '#f8f9fa', border: '1px solid #ccc', borderRadius: 4, cursor: 'pointer' }} disabled={isProcessing}>
+        <button className="btn btn-muted" type="button" onClick={onCancel} disabled={isProcessing}>
           Cancel
         </button>
       </div>
-      {message && <div style={{ color: message.includes('Successful') ? 'green' : 'red', marginTop: 16 }}>{message}</div>}
+      {message ? <div className={`notice ${message.includes('successful') ? 'success' : 'info'}`}>{message}</div> : null}
     </form>
   );
 }
 
-export default function PaymentModal({ clientSecret, amount, onPaymentSuccess, onCancel }) {
+export default function PaymentModal({
+  clientSecret,
+  amount,
+  intentId,
+  isMock = false,
+  paymentBusy = false,
+  onMockPayment,
+  onPaymentSuccess,
+  onCancel
+}) {
+  const stripePromise = useMemo(() => {
+    if (isMock || !stripePublishableKey) return null;
+    return loadStripe(stripePublishableKey);
+  }, [isMock]);
+
   const options = {
-    clientSecret,
+    clientSecret
   };
 
+  const stripeReady = !isMock && Boolean(clientSecret) && Boolean(stripePromise);
+
   return (
-    <div style={{ padding: 20, border: '1px solid #ccc', borderRadius: 8, background: '#f9f9f9', marginTop: 16 }}>
-      <h3 style={{ marginTop: 0 }}>Complete Your Payment {amount ? `(₹${amount})` : ''}</h3>
-      {clientSecret && (
-        <Elements stripe={stripePromise} options={options}>
-          <CheckoutForm onPaymentSuccess={onPaymentSuccess} onCancel={onCancel} />
-        </Elements>
-      )}
+    <div className="modal-backdrop">
+      <div className="payment-modal fade" role="dialog" aria-modal="true" aria-label="Complete payment">
+        <div className="payment-modal-header">
+          <h3>Complete Your Payment {amount ? `(INR ${Number(amount).toFixed(2)})` : ''}</h3>
+          <button className="btn btn-muted" type="button" onClick={onCancel} disabled={paymentBusy}>
+            Close
+          </button>
+        </div>
+
+        {isMock ? (
+          <div className="stack" style={{ gap: '0.75rem' }}>
+            <div className="notice info">
+              Mock payment mode is active. Use the button below to simulate a successful payment.
+            </div>
+            {intentId ? <div className="payment-meta">Intent: {intentId}</div> : null}
+            <div className="btn-row">
+              <button
+                className="btn btn-primary"
+                type="button"
+                onClick={onMockPayment}
+                disabled={paymentBusy || !onMockPayment}
+              >
+                {paymentBusy ? (
+                  <span className="btn-with-spinner">
+                    <span className="btn-spinner" aria-hidden="true" />
+                    Confirming...
+                  </span>
+                ) : 'Confirm Mock Payment'}
+              </button>
+              <button className="btn btn-muted" type="button" onClick={onCancel} disabled={paymentBusy}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : stripeReady ? (
+          <Elements stripe={stripePromise} options={options}>
+            <CheckoutForm onPaymentSuccess={onPaymentSuccess} onCancel={onCancel} />
+          </Elements>
+        ) : (
+          <div className="notice info">
+            Stripe payment UI is unavailable. Configure VITE_STRIPE_PUBLIC_KEY and a valid session client secret.
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -6,8 +6,8 @@ const PLANS = [
     name: 'Free',
     type: 'free',
     price: 0,
-    listings: 1,
-    features: ['1 active listing', 'Basic support']
+    listings: 2,
+    features: ['2 active listings', 'Basic support']
   },
   {
     name: 'Basic',
@@ -20,8 +20,8 @@ const PLANS = [
     name: 'Pro',
     type: 'pro',
     price: 14.99,
-    listings: 50,
-    features: ['50 active listings', '24/7 priority support', 'Advanced analytics', 'Marketing tools']
+    listings: 10,
+    features: ['10 active listings', '24/7 priority support', 'Advanced analytics', 'Marketing tools']
   }
 ];
 
@@ -42,20 +42,23 @@ function SubscriptionModal({ isOpen, onClose, onSubscribe, token, userId }) {
     setError('');
 
     try {
-  await apiRequest('/subscriptions/subscribe', 'POST', {
-    user_id: userId,
-    plan_type: selectedPlan
-  }, token);
+      await apiRequest('/subscriptions/subscribe', {
+        method: 'POST',
+        token,
+        body: {
+          user_id: userId,
+          plan_type: selectedPlan
+        }
+      });
 
-  if (onSubscribe) {
-    onSubscribe(selectedPlan); // ✅ pass selected plan
-  }
+      if (onSubscribe) {
+        onSubscribe(selectedPlan);
+      }
 
-  onClose(); // close only AFTER success
-
-} catch (err) {
-  setError(err.message || 'Failed to subscribe');
-} finally {
+      onClose();
+    } catch (err) {
+      setError(err.message || 'Failed to subscribe');
+    } finally {
       setLoading(false);
     }
   }

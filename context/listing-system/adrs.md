@@ -1,93 +1,105 @@
-# Listing System ADRs (Hourly Slot Model)
+# Listing System ADRs
 
-## ADR-L1: Fixed 60-Minute Slot Size for MVP
-- Status: Proposed
+Last synchronized with implementation: 2026-04-22
+
+## ADR-L1: Fixed 60-Minute Slot Size
+- Status: Accepted (implemented)
 - Date: 2026-04-22
 
 ### Context
-Product focus is small coworking bookings, not overnight stays.
+Current booking flow and UI are built around hourly reservations.
 
 ### Decision
-Use fixed 1-hour slots for all listings in MVP.
+Keep slot_minutes defaulted to 60 and generate hourly slots only.
 
 ### Consequences
 Positive:
-- simpler UX and backend validation
-- easier conflict handling
+- simple validation and predictable slot payloads.
 
 Negative:
-- less flexible for hosts wanting 30-minute slots
+- no 30-minute or custom-duration support.
 
-## ADR-L2: Weekly Availability Plus Date Overrides
-- Status: Proposed
+## ADR-L2: Weekly Rules + Date Overrides
+- Status: Accepted (implemented)
 - Date: 2026-04-22
 
 ### Context
-Hosts need repeating daily windows and occasional exceptions.
+Hosts need repeatable schedule with per-date exceptions.
 
 ### Decision
-Store weekday defaults and date-specific overrides as separate tables.
+Persist weekly defaults and date overrides in separate tables.
 
 ### Consequences
 Positive:
-- expressive enough for real operations
-- efficient updates without full calendar rewrites
+- straightforward override precedence and efficient updates.
 
 Negative:
-- precedence logic must be explicit and tested
+- requires strict validation and complete-week payload discipline.
 
-## ADR-L3: Listing-Timezone Canonical Scheduling
-- Status: Proposed
+## ADR-L3: Listing Timezone as Canonical Schedule Zone
+- Status: Accepted (implemented)
 - Date: 2026-04-22
 
 ### Context
-Hosts define hours in local time; guests may be in different timezones.
+Host-defined local business hours must be interpreted consistently.
 
 ### Decision
-Store schedule in listing timezone and convert to UTC for API payloads.
+Store timezone per listing and compute slot UTC/local values at read time.
 
 ### Consequences
 Positive:
-- host setup is intuitive
-- avoids ambiguity in rule definition
+- host schedule semantics remain intuitive.
 
 Negative:
-- timezone conversion complexity, especially DST edges
+- DST and timezone correctness become critical path logic.
 
-## ADR-L4: Dynamic Slot Generation Instead of Persisted Slot Table
-- Status: Proposed
+## ADR-L4: Dynamic Slot Generation with Overlay
+- Status: Accepted (implemented)
 - Date: 2026-04-22
 
 ### Context
-Persisting all future hourly slots can create large storage and maintenance overhead.
+Persisting all future slots is storage-heavy and hard to maintain.
 
 ### Decision
-Generate candidate slots on read from weekly rules + overrides, then overlay reservations.
+Generate slots on demand from schedule rules and overlay reserved slots from booking-service.
 
 ### Consequences
 Positive:
-- smaller storage footprint
-- immediate reflection of rule changes
+- no slot table explosion.
 
 Negative:
-- higher compute on read path
-- requires caching to meet latency targets
+- slot endpoint depends on booking-service and cache quality.
 
-## ADR-L5: Availability View as Composed Read Model
-- Status: Proposed
+## ADR-L5: Gateway-Centric Access for Listing APIs
+- Status: Accepted (implemented)
 - Date: 2026-04-22
 
 ### Context
-Listing-service owns schedule rules, booking-service owns occupancy.
+Deployment routes clients through api-gateway for auth consistency.
 
 ### Decision
-Slot endpoint composes availability using listing rules and booking reserved slots.
+Treat /api/listings routes as authenticated access path.
 
 ### Consequences
 Positive:
-- clean domain ownership
-- reusable booking engine
+- consistent JWT enforcement and shared policy point.
 
 Negative:
-- inter-service dependency on slot read path
-- requires timeout and fallback strategy
+- some service-level public routes are effectively private in gateway path.
+
+## ADR-L6: TTL-Based Slot Cache Freshness
+- Status: Accepted (implemented)
+- Date: 2026-04-22
+
+### Context
+Slot generation is compute and dependency heavy under burst reads.
+
+### Decision
+Use Redis cache with short TTL and listing mutation invalidation.
+
+### Consequences
+Positive:
+- reduced repeated generation cost.
+
+Negative:
+- reservation changes may remain stale until TTL expiry when no explicit invalidation event is consumed.
