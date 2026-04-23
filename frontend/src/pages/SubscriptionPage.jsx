@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { ApiError, apiRequest } from '../services/api';
+import { parseUtcDate } from '../utils/dateTime';
 
 function formatDate(value) {
-  if (!value) return '-';
-  return new Date(value).toLocaleString();
+  const parsed = parseUtcDate(value);
+  if (!parsed) return '-';
+  return parsed.toLocaleString();
 }
 
 function SubscriptionPage({ token, user }) {

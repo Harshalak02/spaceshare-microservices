@@ -1,4 +1,5 @@
 const service = require('../services/bookingService');
+const { parseUtcInput } = require('../utils/dateTime');
 
 async function create(req, res) {
   try {
@@ -8,9 +9,9 @@ async function create(req, res) {
     let resolvedStartSlotUtc = start_slot_utc;
     let resolvedSlotCount = slot_count;
     if (!resolvedStartSlotUtc && start_time && end_time) {
-      const start = new Date(start_time);
-      const end = new Date(end_time);
-      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
+      const start = parseUtcInput(start_time, 'start_time');
+      const end = parseUtcInput(end_time, 'end_time');
+      if (end <= start) {
         return res.status(400).json({ message: 'Invalid start_time/end_time range' });
       }
       resolvedStartSlotUtc = start.toISOString();
@@ -36,7 +37,7 @@ async function create(req, res) {
     const status =
       error.message.includes('already booked') ? 409 :
       error.message.includes('not found') ? 404 :
-      error.message.includes('invalid') || error.message.includes('required') || error.message.includes('Guest') ? 400 :
+      error.message.includes('invalid') || error.message.includes('required') || error.message.includes('Guest') || error.message.includes('timezone') ? 400 :
       500;
     res.status(status).json({ message: error.message });
   }

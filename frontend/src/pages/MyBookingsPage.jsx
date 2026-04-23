@@ -1,10 +1,9 @@
 import { useState, useEffect } from 'react';
 import { apiRequest } from '../services/api';
+import { parseUtcDate } from '../utils/dateTime';
 
 function parseDate(value) {
-    if (!value) return null;
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
+    return parseUtcDate(value);
 }
 
 function formatDate(value) {
@@ -86,7 +85,11 @@ function MyBookingsPage({ token }) {
         try {
             const data = await apiRequest('/bookings/bookings/my', { token });
             const sorted = [...(data || [])].sort(
-                (a, b) => new Date(b.start_time || b.start_slot_utc) - new Date(a.start_time || a.start_slot_utc)
+                (a, b) => {
+                    const first = parseUtcDate(b.start_time || b.start_slot_utc)?.getTime() || 0;
+                    const second = parseUtcDate(a.start_time || a.start_slot_utc)?.getTime() || 0;
+                    return first - second;
+                }
             );
             setBookings(sorted);
             setNotice({ type: '', text: '' });

@@ -2,17 +2,32 @@ const axios = require('axios');
 const db = require('../models/db');
 const ChannelFactory = require('../channels/ChannelFactory');
 
+function toUtcIsoString(value) {
+  if (!value) return null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    return value.toISOString();
+  }
+
+  const parsed = new Date(String(value));
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
+}
+
 function toWindowDisplay(booking) {
   const startValue = booking.start_time || booking.start_slot_utc;
   const endValue = booking.end_time || booking.end_slot_utc;
 
-  if (!startValue || !endValue) {
+  const startUtc = toUtcIsoString(startValue);
+  const endUtc = toUtcIsoString(endValue);
+
+  if (!startUtc || !endUtc) {
     return { startText: 'N/A', endText: 'N/A' };
   }
 
   return {
-    startText: new Date(startValue).toLocaleString(),
-    endText: new Date(endValue).toLocaleString()
+    startText: startUtc,
+    endText: endUtc
   };
 }
 

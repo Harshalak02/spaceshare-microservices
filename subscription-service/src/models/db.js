@@ -7,6 +7,14 @@ neonConfig.webSocketConstructor = ws;
 
 const pool = new Pool({ connectionString: process.env.DB_URL });
 
+pool.on('connect', async (client) => {
+    try {
+        await client.query("SET TIME ZONE 'UTC'");
+    } catch (error) {
+        console.error('❌ [subscription-service] Failed to set DB timezone to UTC:', error.message);
+    }
+});
+
 pool.connect()
     .then(async (client) => {
         console.log('✅ [subscription-service] PostgreSQL connected');

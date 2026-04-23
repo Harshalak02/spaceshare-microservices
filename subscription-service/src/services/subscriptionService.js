@@ -39,7 +39,7 @@ function normalizePlanType(planType) {
 function getExpiryDateForPlan(planType) {
   const config = PLAN_CONFIG[planType];
   const durationDays = config?.duration_days || 30;
-  return new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000);
+  return new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString();
 }
 
 async function subscribe(data) {

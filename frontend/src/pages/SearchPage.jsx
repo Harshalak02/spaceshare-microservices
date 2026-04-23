@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { apiRequest } from '../services/api';
 import PaymentModal from '../components/PaymentModal';
+import { parseUtcDate, toLocalDateKey } from '../utils/dateTime';
 
 const WEEKDAY_LABELS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -10,13 +11,9 @@ function todayISO() {
 }
 
 function addDaysISO(base, days) {
-  const date = new Date(`${base}T00:00:00`);
-  date.setDate(date.getDate() + days);
+  const date = new Date(`${base}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
-}
-
-function toDateKeyFromLocal(slotStartLocal) {
-  return String(slotStartLocal).slice(0, 10);
 }
 
 function monthKeyFromDateKey(dateKey) {
@@ -41,8 +38,9 @@ function shiftMonthKey(monthKey, delta) {
 }
 
 function monthLabel(monthKey) {
-  const date = new Date(`${monthKey}-01T00:00:00Z`);
-  return date.toLocaleDateString([], { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const [yearText, monthText] = monthKey.split('-');
+  const date = new Date(Number(yearText), Number(monthText) - 1, 1);
+  return date.toLocaleDateString([], { month: 'long', year: 'numeric' });
 }
 
 function buildCalendarCells(monthKey) {
@@ -50,9 +48,9 @@ function buildCalendarCells(monthKey) {
   const year = Number(yearText);
   const monthIndex = Number(monthText) - 1;
 
-  const firstDay = new Date(Date.UTC(year, monthIndex, 1));
-  const firstWeekday = firstDay.getUTCDay();
-  const totalDays = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
+  const firstDay = new Date(year, monthIndex, 1);
+  const firstWeekday = firstDay.getDay();
+  const totalDays = new Date(year, monthIndex + 1, 0).getDate();
 
   const cells = [];
   for (let index = 0; index < firstWeekday; index += 1) {
@@ -71,12 +69,14 @@ function buildCalendarCells(monthKey) {
   return cells;
 }
 
-function formatTimeInTimezone(utcIso, timezone) {
-  return new Date(utcIso).toLocaleTimeString([], {
+function formatTimeInTimezone(utcIso) {
+  const parsed = parseUtcDate(utcIso);
+  if (!parsed) return '-';
+
+  return parsed.toLocaleTimeString([], {
     hour: 'numeric',
     minute: '2-digit',
-    hour12: true,
-    timeZone: timezone
+    hour12: true
   });
 }
 
@@ -85,21 +85,24 @@ function formatDateKey(dateKey) {
   return value.toLocaleDateString([], {
     weekday: 'long',
     month: 'long',
-    day: 'numeric',
-    timeZone: 'UTC'
+    day: 'numeric'
   });
 }
 
 function sortUtcAscending(utcValues) {
-  return [...utcValues].sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+  return [...utcValues].sort((a, b) => {
+    const first = parseUtcDate(a)?.getTime() || 0;
+    const second = parseUtcDate(b)?.getTime() || 0;
+    return first - second;
+  });
 }
 
 function isHourlyConsecutive(utcValues) {
   if (utcValues.length <= 1) return true;
   const ordered = sortUtcAscending(utcValues);
   for (let index = 1; index < ordered.length; index += 1) {
-    const prev = new Date(ordered[index - 1]).getTime();
-    const current = new Date(ordered[index]).getTime();
+    const prev = parseUtcDate(ordered[index - 1])?.getTime() || 0;
+    const current = parseUtcDate(ordered[index])?.getTime() || 0;
     if (current - prev !== ONE_HOUR_MS) {
       return false;
     }
@@ -110,13 +113,18 @@ function isHourlyConsecutive(utcValues) {
 function groupSlotsByDate(slots) {
   const grouped = {};
   for (const slot of slots) {
-    const dateKey = toDateKeyFromLocal(slot.slot_start_local);
+    const dateKey = toLocalDateKey(slot.slot_start_utc);
+    if (!dateKey) continue;
     if (!grouped[dateKey]) grouped[dateKey] = [];
     grouped[dateKey].push(slot);
   }
 
   for (const dateKey of Object.keys(grouped)) {
-    grouped[dateKey].sort((a, b) => new Date(a.slot_start_utc).getTime() - new Date(b.slot_start_utc).getTime());
+    grouped[dateKey].sort((a, b) => {
+      const first = parseUtcDate(a.slot_start_utc)?.getTime() || 0;
+      const second = parseUtcDate(b.slot_start_utc)?.getTime() || 0;
+      return first - second;
+    });
   }
 
   return grouped;
@@ -127,6 +135,7 @@ function formatINR(value) {
 }
 
 function SearchPage({ token }) {
+  const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local timezone';
   const [filters, setFilters] = useState({
     location: '',
     lat: '',
@@ -271,7 +280,7 @@ function SearchPage({ token }) {
       setSlotsBySpace((prev) => ({ ...prev, [spaceId]: payload }));
 
       const loadedSlots = payload?.slots || [];
-      const availableDates = [...new Set(loadedSlots.map((slot) => toDateKeyFromLocal(slot.slot_start_local)))].sort();
+      const availableDates = [...new Set(loadedSlots.map((slot) => toLocalDateKey(slot.slot_start_utc)).filter(Boolean))].sort();
 
       setSelectedSlotsBySpace((prev) => ({ ...prev, [spaceId]: [] }));
 
@@ -624,7 +633,7 @@ function SearchPage({ token }) {
                 {slotPayload ? (
                   <>
                     <div className="tiny">
-                      {availableSlots.length} available slot{availableSlots.length === 1 ? '' : 's'} in {timezone}.
+                      {availableSlots.length} available slot{availableSlots.length === 1 ? '' : 's'} shown in your local time ({userTimezone}).
                     </div>
 
                     {availableSlots.length > 0 ? (
@@ -680,7 +689,7 @@ function SearchPage({ token }) {
                             })}
                           </div>
 
-                          <div className="tiny">Time zone: {timezone}</div>
+                          <div className="tiny">Listing timezone: {timezone} • Display timezone: {userTimezone}</div>
                         </section>
 
                         <section className="booking-times-card">
@@ -698,8 +707,8 @@ function SearchPage({ token }) {
                                   className={`time-slot-btn ${selectedSlotSet.has(slot.slot_start_utc) ? 'active' : ''}`}
                                   onClick={() => selectSlotRange(space.id, daySlots, slot.slot_start_utc)}
                                 >
-                                  <span>{formatTimeInTimezone(slot.slot_start_utc, timezone)}</span>
-                                  <small>to {formatTimeInTimezone(slot.slot_end_utc, timezone)}</small>
+                                  <span>{formatTimeInTimezone(slot.slot_start_utc)}</span>
+                                  <small>to {formatTimeInTimezone(slot.slot_end_utc)}</small>
                                 </button>
                               ))}
                             </div>

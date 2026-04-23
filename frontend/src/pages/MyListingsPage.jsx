@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { apiRequest } from '../services/api';
+import { parseUtcDate } from '../utils/dateTime';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -51,8 +52,9 @@ function normalizeWeek(inputWeek) {
 }
 
 function formatDate(value) {
-    if (!value) return '-';
-    return new Date(value).toLocaleString();
+    const parsed = parseUtcDate(value);
+    if (!parsed) return '-';
+    return parsed.toLocaleString();
 }
 
 function MyListingsPage({ token, user }) {

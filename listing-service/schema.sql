@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS spaces (
   owner_id INT,
   timezone VARCHAR(64) NOT NULL DEFAULT 'UTC',
   slot_minutes INT NOT NULL DEFAULT 60,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Add columns if upgrading from old schema
@@ -18,6 +18,18 @@ ALTER TABLE spaces ADD COLUMN IF NOT EXISTS location_name TEXT;
 ALTER TABLE spaces ADD COLUMN IF NOT EXISTS description TEXT;
 ALTER TABLE spaces ADD COLUMN IF NOT EXISTS timezone VARCHAR(64) NOT NULL DEFAULT 'UTC';
 ALTER TABLE spaces ADD COLUMN IF NOT EXISTS slot_minutes INT NOT NULL DEFAULT 60;
+ALTER TABLE spaces ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'spaces' AND column_name = 'created_at' AND data_type = 'timestamp without time zone'
+  ) THEN
+    ALTER TABLE spaces ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at AT TIME ZONE 'UTC';
+  END IF;
+END $$;
 
 -- Ensure lat/lon are correct type
 ALTER TABLE spaces ALTER COLUMN lat TYPE DOUBLE PRECISION USING lat::DOUBLE PRECISION;
@@ -32,8 +44,8 @@ CREATE TABLE IF NOT EXISTS listing_weekly_availability (
   is_open BOOLEAN NOT NULL DEFAULT FALSE,
   open_time_local TIME,
   close_time_local TIME,
-  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT listing_weekly_day_range CHECK (day_of_week BETWEEN 0 AND 6),
   CONSTRAINT listing_weekly_window_valid CHECK (
     (is_open = FALSE AND open_time_local IS NULL AND close_time_local IS NULL)
@@ -43,6 +55,25 @@ CREATE TABLE IF NOT EXISTS listing_weekly_availability (
   CONSTRAINT listing_weekly_unique UNIQUE (space_id, day_of_week)
 );
 
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'listing_weekly_availability' AND column_name = 'created_at' AND data_type = 'timestamp without time zone'
+  ) THEN
+    ALTER TABLE listing_weekly_availability ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at AT TIME ZONE 'UTC';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'listing_weekly_availability' AND column_name = 'updated_at' AND data_type = 'timestamp without time zone'
+  ) THEN
+    ALTER TABLE listing_weekly_availability ALTER COLUMN updated_at TYPE TIMESTAMPTZ USING updated_at AT TIME ZONE 'UTC';
+  END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS listing_availability_overrides (
   id BIGSERIAL PRIMARY KEY,
   space_id INT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
@@ -51,8 +82,8 @@ CREATE TABLE IF NOT EXISTS listing_availability_overrides (
   open_time_local TIME,
   close_time_local TIME,
   note TEXT,
-  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT listing_override_window_valid CHECK (
     (closed_all_day = TRUE AND open_time_local IS NULL AND close_time_local IS NULL)
     OR
@@ -60,6 +91,25 @@ CREATE TABLE IF NOT EXISTS listing_availability_overrides (
   ),
   CONSTRAINT listing_override_unique UNIQUE (space_id, date_local)
 );
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'listing_availability_overrides' AND column_name = 'created_at' AND data_type = 'timestamp without time zone'
+  ) THEN
+    ALTER TABLE listing_availability_overrides ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at AT TIME ZONE 'UTC';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'listing_availability_overrides' AND column_name = 'updated_at' AND data_type = 'timestamp without time zone'
+  ) THEN
+    ALTER TABLE listing_availability_overrides ALTER COLUMN updated_at TYPE TIMESTAMPTZ USING updated_at AT TIME ZONE 'UTC';
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_weekly_space_day ON listing_weekly_availability(space_id, day_of_week);
 CREATE INDEX IF NOT EXISTS idx_override_space_date ON listing_availability_overrides(space_id, date_local);

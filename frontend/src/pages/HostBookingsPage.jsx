@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { apiRequest } from '../services/api';
+import { parseUtcDate } from '../utils/dateTime';
 
 function formatDateTime(value) {
-  if (!value) return '-';
-  return new Date(value).toLocaleString();
+  const parsed = parseUtcDate(value);
+  if (!parsed) return '-';
+  return parsed.toLocaleString();
 }
 
 function HostBookingsPage({ token, user }) {
@@ -18,7 +20,11 @@ function HostBookingsPage({ token, user }) {
     try {
       const result = await apiRequest('/bookings/bookings/host/my', { token });
       const sorted = [...(result || [])].sort(
-        (a, b) => new Date(b.start_time || b.start_slot_utc) - new Date(a.start_time || a.start_slot_utc)
+        (a, b) => {
+          const first = parseUtcDate(b.start_time || b.start_slot_utc)?.getTime() || 0;
+          const second = parseUtcDate(a.start_time || a.start_slot_utc)?.getTime() || 0;
+          return first - second;
+        }
       );
       setBookings(sorted);
     } catch (error) {

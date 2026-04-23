@@ -2,9 +2,19 @@ const db = require('../models/db');
 const redis = require('../models/redis');
 const http = require('http');
 const { processPayment } = require('./paymentService');
+const { parseUtcInput, toUtcIsoString } = require('../utils/dateTime');
 
 const LISTING_SERVICE_URL = process.env.LISTING_SERVICE_URL || 'http://localhost:4002';
 const INTERNAL_HTTP_TIMEOUT_MS = Number(process.env.INTERNAL_HTTP_TIMEOUT_MS || 5000);
+const BOOKING_TIMESTAMP_FIELDS = [
+  'start_time',
+  'end_time',
+  'start_slot_utc',
+  'end_slot_utc',
+  'created_at',
+  'cancelled_at',
+  'completed_at'
+];
 
 function toDecimal(value) {
   return Number(Number(value).toFixed(2));
@@ -24,6 +34,17 @@ function buildSlotSequence(startDate, slotCount) {
     slots.push({ slotStart, slotEnd });
   }
   return slots;
+}
+
+function normalizeBookingRow(row) {
+  if (!row) return row;
+
+  const normalized = { ...row };
+  for (const key of BOOKING_TIMESTAMP_FIELDS) {
+    normalized[key] = toUtcIsoString(normalized[key]);
+  }
+
+  return normalized;
 }
 
 async function publishBookingEvent(type, payload) {
@@ -109,10 +130,7 @@ async function createBooking(data) {
     throw new Error('guest_count must be a positive integer');
   }
 
-  const start = new Date(start_slot_utc);
-  if (Number.isNaN(start.getTime())) {
-    throw new Error('start_slot_utc is invalid');
-  }
+  const start = parseUtcInput(start_slot_utc, 'start_slot_utc');
   if (!isSlotBoundaryAligned(start)) {
     throw new Error('start_slot_utc must align to exact minute boundaries');
   }
@@ -167,7 +185,7 @@ async function createBooking(data) {
       );
       if (existing.rows.length > 0) {
         await client.query('COMMIT');
-        return existing.rows[0];
+        return normalizeBookingRow(existing.rows[0]);
       }
     }
 
@@ -240,26 +258,28 @@ async function createBooking(data) {
 
     await client.query('COMMIT');
 
+    const normalizedBooking = normalizeBookingRow(booking);
+
     await publishBookingEvent('BOOKING_CREATED', {
-      booking_id: booking.id,
-      space_id: booking.space_id,
-      slot_count: booking.slot_count,
-      status: booking.status
+      booking_id: normalizedBooking.id,
+      space_id: normalizedBooking.space_id,
+      slot_count: normalizedBooking.slot_count,
+      status: normalizedBooking.status
     });
 
     if (status === 'confirmed') {
       await publishBookingEvent('BOOKING_CONFIRMED', {
-        booking_id: booking.id,
-        space_id: booking.space_id,
-        start_slot_utc: booking.start_slot_utc,
-        end_slot_utc: booking.end_slot_utc,
-        slot_count: booking.slot_count,
-        user_id: booking.user_id,
-        host_id: booking.host_id
+        booking_id: normalizedBooking.id,
+        space_id: normalizedBooking.space_id,
+        start_slot_utc: normalizedBooking.start_slot_utc,
+        end_slot_utc: normalizedBooking.end_slot_utc,
+        slot_count: normalizedBooking.slot_count,
+        user_id: normalizedBooking.user_id,
+        host_id: normalizedBooking.host_id
       });
     }
 
-    return booking;
+    return normalizedBooking;
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -282,7 +302,7 @@ async function updateBookingStatus(bookingId, status, changedBy = null, reason =
     const current = found.rows[0];
     if (current.status === status) {
       await client.query('COMMIT');
-      return current;
+      return normalizeBookingRow(current);
     }
 
     const updatedResult = await client.query(
@@ -303,21 +323,23 @@ async function updateBookingStatus(bookingId, status, changedBy = null, reason =
 
     await client.query('COMMIT');
 
+    const normalizedUpdated = normalizeBookingRow(updated);
+
     if (status === 'confirmed') {
       await publishBookingEvent('BOOKING_CONFIRMED', {
-        booking_id: updated.id,
-        space_id: updated.space_id,
-        start_time: updated.start_time,
-        end_time: updated.end_time,
-        start_slot_utc: updated.start_slot_utc,
-        end_slot_utc: updated.end_slot_utc,
-        slot_count: updated.slot_count,
-        user_id: updated.user_id,
-        host_id: updated.host_id
+        booking_id: normalizedUpdated.id,
+        space_id: normalizedUpdated.space_id,
+        start_time: normalizedUpdated.start_time,
+        end_time: normalizedUpdated.end_time,
+        start_slot_utc: normalizedUpdated.start_slot_utc,
+        end_slot_utc: normalizedUpdated.end_slot_utc,
+        slot_count: normalizedUpdated.slot_count,
+        user_id: normalizedUpdated.user_id,
+        host_id: normalizedUpdated.host_id
       });
     }
 
-    return updated;
+    return normalizedUpdated;
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -328,12 +350,12 @@ async function updateBookingStatus(bookingId, status, changedBy = null, reason =
 
 async function getBookingsByUser(userId) {
   const result = await db.query('SELECT * FROM bookings WHERE user_id=$1 ORDER BY start_time DESC', [userId]);
-  return result.rows;
+  return result.rows.map(normalizeBookingRow);
 }
 
 async function getBookingsByHost(hostId) {
   const result = await db.query('SELECT * FROM bookings WHERE host_id=$1 ORDER BY start_time DESC', [hostId]);
-  return result.rows;
+  return result.rows.map(normalizeBookingRow);
 }
 
 async function cancelBooking(bookingId, actorUserId, role, reason) {
@@ -386,7 +408,7 @@ async function cancelBooking(bookingId, actorUserId, role, reason) {
 
     await client.query('COMMIT');
 
-    const updated = updatedResult.rows[0];
+    const updated = normalizeBookingRow(updatedResult.rows[0]);
     await publishBookingEvent('BOOKING_CANCELLED', {
       booking_id: updated.id,
       space_id: updated.space_id,
@@ -425,8 +447,8 @@ async function getReservedSlots(spaceId, from, to) {
   );
 
   return result.rows.map((row) => ({
-    slot_start_utc: row.slot_start_utc,
-    slot_end_utc: row.slot_end_utc
+    slot_start_utc: toUtcIsoString(row.slot_start_utc),
+    slot_end_utc: toUtcIsoString(row.slot_end_utc)
   }));
 }
 
