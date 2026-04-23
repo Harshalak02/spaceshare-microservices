@@ -1,14 +1,19 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { apiRequest } from '../services/api';
 
 const defaultLogin = { email: '', password: '' };
 const defaultRegister = { email: '', password: '', role: 'guest' };
 
-function AuthPage({ onAuthenticated }) {
+function AuthPage({ onAuthenticated, initialNotice = '' }) {
   const [loginForm, setLoginForm] = useState(defaultLogin);
   const [registerForm, setRegisterForm] = useState(defaultRegister);
   const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState({ type: '', text: '' });
+
+  useEffect(() => {
+    if (!initialNotice) return;
+    setNotice({ type: 'info', text: initialNotice });
+  }, [initialNotice]);
 
   function updateLogin(event) {
     const { name, value } = event.target;

@@ -15,9 +15,9 @@ function SearchForm({ onSearch }) {
   }
 
   return (
-    <form onSubmit={(e) => { e.preventDefault(); onSearch(form); }} style={{ marginBottom: 16 }}>
+    <form onSubmit={(e) => { e.preventDefault(); onSearch(form); }} className="card stack">
       <h2>🔍 Search Spaces</h2>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+      <div className="search-form-inline-grid">
         {Object.keys(form).map((field) => (
           <input
             key={field}
@@ -25,10 +25,9 @@ function SearchForm({ onSearch }) {
             value={form[field]}
             onChange={handleChange}
             placeholder={field}
-            style={{ padding: 6, width: 120 }}
           />
         ))}
-        <button type="submit" style={{ padding: '6px 16px' }}>Search</button>
+        <button className="btn btn-primary" type="submit">Search</button>
       </div>
     </form>
   );

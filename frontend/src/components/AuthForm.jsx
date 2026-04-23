@@ -13,18 +13,20 @@ function AuthForm({ onSubmit, mode = 'login' }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} style={{ marginBottom: 16 }}>
+    <form onSubmit={handleSubmit} className="card stack">
       <h2>{mode === 'login' ? 'Login' : 'Register'}</h2>
-      <div style={{ marginBottom: 8 }}>
-        <input placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} style={{ padding: 6, marginRight: 8 }} />
-        <input placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={{ padding: 6, marginRight: 8 }} />
+      <div className="grid-2">
+        <input placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        <input placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
         {mode === 'register' && (
-          <select value={role} onChange={(e) => setRole(e.target.value)} style={{ padding: 6, marginRight: 8 }}>
+          <select value={role} onChange={(e) => setRole(e.target.value)}>
             <option value="guest">Guest</option>
             <option value="host">Host</option>
           </select>
         )}
-        <button type="submit" style={{ padding: '6px 16px' }}>{mode === 'login' ? 'Login' : 'Create account'}</button>
+      </div>
+      <div className="btn-row">
+        <button className="btn btn-primary" type="submit">{mode === 'login' ? 'Login' : 'Create account'}</button>
       </div>
     </form>
   );

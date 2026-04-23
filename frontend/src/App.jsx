@@ -33,6 +33,7 @@ function App() {
   const [token, setToken] = useState('');
   const [user, setUser] = useState(null);
   const [page, setPage] = useState('search');
+  const [authNotice, setAuthNotice] = useState('');
 
   useEffect(() => {
     const stored = getStoredAuth();
@@ -40,6 +41,19 @@ function App() {
       setToken(stored.token);
       setUser(stored.user);
     }
+  }, []);
+
+  useEffect(() => {
+    function handleUnauthorized() {
+      clearStoredAuth();
+      setToken('');
+      setUser(null);
+      setPage('search');
+      setAuthNotice('Your session expired. Please sign in again.');
+    }
+
+    window.addEventListener('spaceshare:unauthorized', handleUnauthorized);
+    return () => window.removeEventListener('spaceshare:unauthorized', handleUnauthorized);
   }, []);
 
   useEffect(() => {
@@ -73,6 +87,7 @@ function App() {
     setToken(auth.token);
     setUser(auth.user);
     setPage('search');
+    setAuthNotice('');
     setStoredAuth(auth);
   }
 
@@ -80,13 +95,16 @@ function App() {
     setToken('');
     setUser(null);
     setPage('search');
+    setAuthNotice('');
     clearStoredAuth();
   }
+
+  const userInitial = (user?.email || '?').trim().charAt(0).toUpperCase();
 
   if (!token || !user) {
     return (
       <main className="app-root auth-root">
-        <AuthPage onAuthenticated={handleAuthSuccess} />
+        <AuthPage onAuthenticated={handleAuthSuccess} initialNotice={authNotice} />
       </main>
     );
   }
@@ -105,10 +123,14 @@ function App() {
     <main className="app-root">
       <header className="topbar">
         <div className="brand">
-          <h1 className="brand-title">SpaceShare</h1>
-          <p className="brand-subtitle">Hourly coworking marketplace dashboard</p>
+          <div className="brand-mark" aria-hidden="true">S</div>
+          <div>
+            <h1 className="brand-title">SpaceShare</h1>
+            <p className="brand-subtitle">Smart workspace bookings for modern teams</p>
+          </div>
         </div>
         <div className="user-chip">
+          <div className="user-avatar" aria-hidden="true">{userInitial}</div>
           <div>
             <strong>{user.email}</strong>
             <div className="user-role">{user.role}</div>

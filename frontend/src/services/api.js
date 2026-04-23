@@ -43,6 +43,10 @@ export async function apiRequest(path, options = {}) {
   const payload = await readPayload(res);
 
   if (!res.ok) {
+    if (res.status === 401 && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('spaceshare:unauthorized', { detail: { path } }));
+    }
+
     const message = payload?.message || payload?.error || `Request failed with status ${res.status}`;
     throw new ApiError(message, res.status, payload);
   }

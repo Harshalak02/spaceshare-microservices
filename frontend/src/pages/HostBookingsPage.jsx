@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../services/api';
 import { parseUtcDate } from '../utils/dateTime';
 
@@ -12,6 +12,28 @@ function HostBookingsPage({ token, user }) {
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState({ type: '', text: '' });
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [searchText, setSearchText] = useState('');
+
+  const filteredBookings = useMemo(() => {
+    const query = searchText.trim().toLowerCase();
+
+    return bookings.filter((booking) => {
+      const statusMatches = statusFilter === 'all' || String(booking.status || '').toLowerCase() === statusFilter;
+      if (!statusMatches) return false;
+
+      if (!query) return true;
+
+      return [
+        booking.id,
+        booking.space_id,
+        booking.user_id,
+        booking.status,
+        booking.start_slot_utc,
+        booking.end_slot_utc
+      ].some((value) => String(value || '').toLowerCase().includes(query));
+    });
+  }, [bookings, searchText, statusFilter]);
 
   async function loadBookings() {
     setLoading(true);
@@ -59,15 +81,40 @@ function HostBookingsPage({ token, user }) {
         </button>
       </div>
 
+      <section className="card stack">
+        <div className="grid-2">
+          <div className="field">
+            <label htmlFor="host-bookings-status">Status</label>
+            <select id="host-bookings-status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+              <option value="all">All</option>
+              <option value="pending">Pending</option>
+              <option value="confirmed">Confirmed</option>
+              <option value="cancelled">Cancelled</option>
+              <option value="completed">Completed</option>
+            </select>
+          </div>
+
+          <div className="field">
+            <label htmlFor="host-bookings-search">Search</label>
+            <input
+              id="host-bookings-search"
+              placeholder="Booking ID, guest ID, space ID"
+              value={searchText}
+              onChange={(event) => setSearchText(event.target.value)}
+            />
+          </div>
+        </div>
+      </section>
+
       {notice.text ? <div className={`notice ${notice.type || 'info'}`}>{notice.text}</div> : null}
 
       {loading ? <div className="notice info">Loading host bookings...</div> : null}
 
-      {!loading && bookings.length === 0 ? (
+      {!loading && filteredBookings.length === 0 ? (
         <div className="notice info">No host-side bookings yet.</div>
       ) : null}
 
-      {bookings.map((booking) => (
+      {filteredBookings.map((booking) => (
         <article className="card" key={booking.id}>
           <div className="card-title-row">
             <h3>Booking #{booking.id}</h3>

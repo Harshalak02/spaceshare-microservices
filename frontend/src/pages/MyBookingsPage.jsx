@@ -81,11 +81,6 @@ function bookingStatusClass(status) {
     return 'neutral';
 }
 
-function normalizeImageUrls(value) {
-    if (!Array.isArray(value)) return [];
-    return value.map((item) => String(item || '').trim()).filter(Boolean);
-}
-
 function MyBookingsPage({ token }) {
     const [bookings, setBookings] = useState([]);
     const [listingDetailsById, setListingDetailsById] = useState({});
@@ -184,7 +179,6 @@ function MyBookingsPage({ token }) {
                 const endAt = booking.end_slot_utc || booking.end_time;
                 const duration = getDurationLabel(booking);
                 const listing = listingDetailsById[Number(booking.space_id)] || null;
-                const listingImages = normalizeImageUrls(listing?.image_urls);
                 const listingTitle = listing?.title || `Space #${booking.space_id}`;
 
                 return (
@@ -197,12 +191,6 @@ function MyBookingsPage({ token }) {
                             </div>
                             <span className={`pill ${bookingStatusClass(status)}`}>{toStatusLabel(status)}</span>
                         </div>
-
-                        {listingImages[0] ? (
-                            <div className="listing-cover-wrap booking-listing-cover-wrap">
-                                <img src={listingImages[0]} alt={listingTitle} className="booking-listing-cover" />
-                            </div>
-                        ) : null}
 
                         <div className="booking-card-grid">
                             <section className="booking-module">

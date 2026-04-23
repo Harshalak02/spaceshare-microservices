@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { MapContainer, Marker, Popup, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import PaymentModal from '../components/PaymentModal';
 import { apiRequest } from '../services/api';
@@ -175,6 +175,8 @@ function MapRecenter({ center }) {
 }
 
 function SearchPage({ token }) {
+  const mapPanelRef = useRef(null);
+  const listingCardRefs = useRef({});
   const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local timezone';
 
   const [filters, setFilters] = useState({
@@ -193,6 +195,8 @@ function SearchPage({ token }) {
   const [notice, setNotice] = useState({ type: '', text: '' });
   const [searchBusy, setSearchBusy] = useState(false);
   const [geocodeBusy, setGeocodeBusy] = useState(false);
+  const [geolocateBusy, setGeolocateBusy] = useState(false);
+  const [sortBy, setSortBy] = useState('recommended');
 
   const [expandedId, setExpandedId] = useState(null);
   const [slotQueryBySpace, setSlotQueryBySpace] = useState({});
@@ -211,9 +215,30 @@ function SearchPage({ token }) {
     return `${spaces.length} space${spaces.length > 1 ? 's' : ''} available.`;
   }, [spaces]);
 
+  const visibleSpaces = useMemo(() => {
+    const list = [...spaces];
+
+    if (sortBy === 'price-asc') {
+      list.sort((a, b) => Number(a.price_per_hour || 0) - Number(b.price_per_hour || 0));
+      return list;
+    }
+
+    if (sortBy === 'price-desc') {
+      list.sort((a, b) => Number(b.price_per_hour || 0) - Number(a.price_per_hour || 0));
+      return list;
+    }
+
+    if (sortBy === 'capacity-desc') {
+      list.sort((a, b) => Number(b.capacity || 0) - Number(a.capacity || 0));
+      return list;
+    }
+
+    return list;
+  }, [spaces, sortBy]);
+
   const mapSpaces = useMemo(() => (
-    spaces.filter((space) => isValidLatLon(Number(space.lat), Number(space.lon)))
-  ), [spaces]);
+    visibleSpaces.filter((space) => isValidLatLon(Number(space.lat), Number(space.lon)))
+  ), [visibleSpaces]);
 
   const selectedMapSpace = useMemo(() => {
     return spaces.find((space) => Number(space.id) === Number(selectedMapSpaceId)) || null;
@@ -310,7 +335,7 @@ function SearchPage({ token }) {
 
   async function geocodeLocation() {
     if (!filters.location.trim()) {
-      setNotice({ type: 'info', text: 'Enter a location first for coordinate lookup.' });
+      setNotice({ type: 'info', text: 'Enter a location first for lookup.' });
       return;
     }
 
@@ -327,12 +352,56 @@ function SearchPage({ token }) {
         setNotice({ type: 'info', text: 'Location not found. Please try a different location name.' });
       } else {
         setFilters((prev) => ({ ...prev, lat: data[0].lat, lon: data[0].lon }));
-        setNotice({ type: 'success', text: `Coordinates loaded for ${data[0].display_name}.` });
+        setNotice({ type: 'success', text: `Location loaded for ${data[0].display_name}.` });
       }
     } catch (error) {
       setNotice({ type: 'error', text: `Geocoding failed: ${error.message}` });
     } finally {
       setGeocodeBusy(false);
+    }
+  }
+
+  async function useCurrentLocation() {
+    if (!navigator.geolocation) {
+      setNotice({ type: 'info', text: 'Geolocation is not supported in this browser.' });
+      return;
+    }
+
+    setGeolocateBusy(true);
+    setNotice({ type: '', text: '' });
+
+    try {
+      const position = await new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 30000
+        });
+      });
+
+      const lat = Number(position.coords.latitude);
+      const lon = Number(position.coords.longitude);
+
+      setFilters((prev) => ({
+        ...prev,
+        lat: String(lat),
+        lon: String(lon)
+      }));
+
+      try {
+        const locationName = await reverseGeocodeToLocation(lat, lon);
+        if (locationName) {
+          setFilters((prev) => ({ ...prev, location: locationName }));
+        }
+      } catch {
+        // Keep geolocation useful even if reverse lookup fails.
+      }
+
+      setNotice({ type: 'success', text: 'Current location selected. You can search now.' });
+    } catch (error) {
+      setNotice({ type: 'error', text: `Unable to access current location: ${error.message || 'Permission denied.'}` });
+    } finally {
+      setGeolocateBusy(false);
     }
   }
 
@@ -473,9 +542,41 @@ function SearchPage({ token }) {
     }
   }
 
-  async function focusListingFromMap(spaceId) {
+  function focusOnMap(spaceId) {
+    const selected = spaces.find((space) => Number(space.id) === Number(spaceId));
     setSelectedMapSpaceId(spaceId);
-    await expandCard(spaceId);
+
+    if (selected && isValidLatLon(Number(selected.lat), Number(selected.lon))) {
+      setFilters((prev) => ({
+        ...prev,
+        lat: String(selected.lat),
+        lon: String(selected.lon),
+        location: selected.location_name || prev.location
+      }));
+    }
+
+    mapPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  async function openBookingPanelFromMap(spaceId) {
+    setSelectedMapSpaceId(spaceId);
+    setExpandedId(spaceId);
+
+    if (!slotsBySpace[spaceId]) {
+      await loadSlots(spaceId, { preserveNotice: true });
+    }
+
+    requestAnimationFrame(() => {
+      const target = listingCardRefs.current[spaceId];
+      if (target instanceof HTMLElement) {
+        const bookingSummary = target.querySelector('.booking-summary');
+        if (bookingSummary instanceof HTMLElement) {
+          bookingSummary.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } else {
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }
+    });
   }
 
   function selectDate(spaceId, dateKey) {
@@ -718,7 +819,7 @@ function SearchPage({ token }) {
         <section className="search-results-panel">
           <section className="card">
             <h3 className="section-title">Search Filters</h3>
-            <p className="section-subtitle">Click anywhere on the map to set coordinates instantly.</p>
+            <p className="section-subtitle">Click anywhere on the map to set search location instantly.</p>
 
             <form className="stack" onSubmit={handleSearch}>
               <div className="grid-2">
@@ -733,20 +834,12 @@ function SearchPage({ token }) {
                   />
                 </div>
                 <div className="btn-row" style={{ alignItems: 'end' }}>
-                  <button className="btn btn-muted" type="button" onClick={geocodeLocation} disabled={geocodeBusy}>
+                  <button className="btn btn-muted" type="button" onClick={geocodeLocation} disabled={geocodeBusy || geolocateBusy}>
                     {geocodeBusy ? 'Looking up...' : 'Resolve Location'}
                   </button>
-                </div>
-              </div>
-
-              <div className="grid-2">
-                <div className="field">
-                  <label htmlFor="lat">Latitude</label>
-                  <input id="lat" name="lat" value={filters.lat} onChange={updateFilters} placeholder="Click map or resolve location" />
-                </div>
-                <div className="field">
-                  <label htmlFor="lon">Longitude</label>
-                  <input id="lon" name="lon" value={filters.lon} onChange={updateFilters} placeholder="Click map or resolve location" />
+                  <button className="btn btn-muted" type="button" onClick={useCurrentLocation} disabled={geocodeBusy || geolocateBusy}>
+                    {geolocateBusy ? 'Locating...' : 'Use My Location'}
+                  </button>
                 </div>
               </div>
 
@@ -776,18 +869,29 @@ function SearchPage({ token }) {
                 <button className="btn btn-muted" type="button" onClick={clearFilters}>Reset Filters</button>
               </div>
 
-              <div className="btn-row">
-                <button className="btn btn-primary" type="submit" disabled={searchBusy}>
-                  {searchBusy ? 'Searching...' : 'Search Spaces'}
-                </button>
-                <span className="tiny" style={{ alignSelf: 'center' }}>{resultSummary}</span>
+              <div className="search-result-actions">
+                <div className="btn-row">
+                  <button className="btn btn-primary" type="submit" disabled={searchBusy}>
+                    {searchBusy ? 'Searching...' : 'Search Spaces'}
+                  </button>
+                  <span className="tiny" style={{ alignSelf: 'center' }}>{resultSummary}</span>
+                </div>
+                <div className="field search-sort-field">
+                  <label htmlFor="sort_results">Sort Results</label>
+                  <select id="sort_results" value={sortBy} onChange={(event) => setSortBy(event.target.value)}>
+                    <option value="recommended">Recommended</option>
+                    <option value="price-asc">Price: Low to High</option>
+                    <option value="price-desc">Price: High to Low</option>
+                    <option value="capacity-desc">Capacity: High to Low</option>
+                  </select>
+                </div>
               </div>
             </form>
           </section>
 
           {notice.text ? <div className={`notice ${notice.type || 'info'}`}>{notice.text}</div> : null}
 
-          {spaces.map((space) => {
+          {visibleSpaces.map((space) => {
             const query = getSlotQuery(space.id);
             const slotPayload = slotsBySpace[space.id];
             const availableSlots = slotPayload?.slots || [];
@@ -829,6 +933,13 @@ function SearchPage({ token }) {
               <article
                 className={`card fade listing-result-card ${Number(selectedMapSpaceId) === Number(space.id) ? 'active' : ''}`}
                 key={space.id}
+                ref={(node) => {
+                  if (node) {
+                    listingCardRefs.current[space.id] = node;
+                  } else {
+                    delete listingCardRefs.current[space.id];
+                  }
+                }}
                 onClick={() => setSelectedMapSpaceId(space.id)}
               >
                 {coverImage ? (
@@ -844,13 +955,13 @@ function SearchPage({ token }) {
                     <h3>{space.title}</h3>
                     <p className="tiny">{space.description || 'No description provided.'}</p>
                     <div className="meta-row">
-                      <span>{space.location_name || `${space.lat}, ${space.lon}`}</span>
+                      <span>{space.location_name || 'Location unavailable'}</span>
                       <span>INR {space.price_per_hour}/hour</span>
                       <span>Capacity {space.capacity}</span>
                     </div>
                   </div>
                   <div className="btn-row">
-                    <button className="btn btn-muted" onClick={() => focusListingFromMap(space.id)}>View on Map</button>
+                    <button className="btn btn-muted" onClick={() => focusOnMap(space.id)}>View on Map</button>
                     <button className="btn btn-muted" onClick={() => expandCard(space.id)}>
                       {expandedId === space.id ? 'Hide Booking Panel' : 'View Slots'}
                     </button>
@@ -1034,7 +1145,7 @@ function SearchPage({ token }) {
           })}
         </section>
 
-        <aside className="search-map-panel">
+        <aside className="search-map-panel" ref={mapPanelRef}>
           <section className="card map-shell">
             <div className="card-title-row" style={{ marginBottom: '0.55rem' }}>
               <h3>Map Explorer</h3>
@@ -1054,7 +1165,7 @@ function SearchPage({ token }) {
                 <Marker position={[Number(filters.lat), Number(filters.lon)]}>
                   <Popup>
                     <strong>Search Center</strong>
-                    <div>{filters.location || `${Number(filters.lat).toFixed(4)}, ${Number(filters.lon).toFixed(4)}`}</div>
+                    <div>{filters.location || 'Selected location'}</div>
                   </Popup>
                 </Marker>
               ) : null}
@@ -1073,7 +1184,7 @@ function SearchPage({ token }) {
                       <div className="map-popup-card">
                         {images[0] ? <img src={images[0]} alt={space.title} className="map-popup-image" /> : null}
                         <strong>{space.title}</strong>
-                        <div>{space.location_name || `${space.lat}, ${space.lon}`}</div>
+                        <div>{space.location_name || 'Location unavailable'}</div>
                         <div>{formatINR(space.price_per_hour)} per hour</div>
                       </div>
                     </Popup>
@@ -1090,7 +1201,7 @@ function SearchPage({ token }) {
                   <h3>{selectedMapSpace.title}</h3>
                   <p className="tiny">Listing #{selectedMapSpace.id}</p>
                 </div>
-                <button className="btn btn-muted" onClick={() => focusListingFromMap(selectedMapSpace.id)}>
+                <button className="btn btn-muted" onClick={() => openBookingPanelFromMap(selectedMapSpace.id)}>
                   Open Booking Panel
                 </button>
               </div>
@@ -1114,7 +1225,6 @@ function SearchPage({ token }) {
                 <div className="booking-key-row"><span>Location</span><strong>{selectedMapSpace.location_name || '-'}</strong></div>
                 <div className="booking-key-row"><span>Price</span><strong>{formatINR(selectedMapSpace.price_per_hour)} / hour</strong></div>
                 <div className="booking-key-row"><span>Capacity</span><strong>{selectedMapSpace.capacity}</strong></div>
-                <div className="booking-key-row"><span>Coordinates</span><strong>{Number(selectedMapSpace.lat).toFixed(4)}, {Number(selectedMapSpace.lon).toFixed(4)}</strong></div>
               </div>
             </section>
           ) : (
