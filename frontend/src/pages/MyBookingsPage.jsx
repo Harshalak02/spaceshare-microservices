@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { apiRequest } from '../services/api';
 import { parseUtcDate } from '../utils/dateTime';
-
+const DISPLAY_TIME_ZONE = 'Asia/Kolkata';
+const DISPLAY_TIME_ZONE_LABEL = 'India Standard Time (IST)';
 function parseDate(value) {
     return parseUtcDate(value);
 }
