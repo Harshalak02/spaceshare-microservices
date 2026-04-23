@@ -107,7 +107,7 @@ function AddSpacePage({ token, user }) {
             const data = await response.json();
 
             if (!Array.isArray(data) || data.length === 0) {
-                setNotice({ type: 'info', text: 'No matching location found. Please enter coordinates manually.' });
+                setNotice({ type: 'info', text: 'No matching location found. Please try a different location name.' });
             } else {
                 setForm((prev) => ({
                     ...prev,
@@ -245,15 +245,11 @@ function AddSpacePage({ token, user }) {
                         </div>
                     </div>
 
-                    <div className="grid-3">
-                        <div className="field">
-                            <label htmlFor="lat">Latitude</label>
-                            <input id="lat" name="lat" value={form.lat} onChange={updateForm} required />
-                        </div>
-                        <div className="field">
-                            <label htmlFor="lon">Longitude</label>
-                            <input id="lon" name="lon" value={form.lon} onChange={updateForm} required />
-                        </div>
+                    {/* Hidden lat/lon fields – populated automatically by geocoding */}
+                    <input type="hidden" id="lat" name="lat" value={form.lat} />
+                    <input type="hidden" id="lon" name="lon" value={form.lon} />
+
+                    <div className="grid-2">
                         <div className="field">
                             <label htmlFor="capacity">Capacity</label>
                             <input id="capacity" name="capacity" type="number" min="1" value={form.capacity} onChange={updateForm} required />
