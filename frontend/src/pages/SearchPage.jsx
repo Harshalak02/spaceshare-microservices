@@ -188,7 +188,7 @@ function SearchPage({ token }) {
       const data = await response.json();
 
       if (!Array.isArray(data) || data.length === 0) {
-        setNotice({ type: 'info', text: 'Location not found. You can still enter lat/lon manually.' });
+        setNotice({ type: 'info', text: 'Location not found. Please try a different location name.' });
       } else {
         setFilters((prev) => ({ ...prev, lat: data[0].lat, lon: data[0].lon }));
         setNotice({ type: 'success', text: `Coordinates loaded for ${data[0].display_name}.` });
@@ -205,7 +205,7 @@ function SearchPage({ token }) {
     setNotice({ type: '', text: '' });
 
     if (!filters.lat || !filters.lon) {
-      setNotice({ type: 'info', text: 'Please provide latitude and longitude for search.' });
+      setNotice({ type: 'info', text: 'Please enter a location and click "Get Coordinates" before searching.' });
       return;
     }
 
@@ -508,15 +508,11 @@ function SearchPage({ token }) {
             </div>
           </div>
 
+          {/* Hidden lat/lon fields – populated automatically by geocoding */}
+          <input type="hidden" id="lat" name="lat" value={filters.lat} />
+          <input type="hidden" id="lon" name="lon" value={filters.lon} />
+
           <div className="grid-3">
-            <div className="field">
-              <label htmlFor="lat">Latitude</label>
-              <input id="lat" name="lat" value={filters.lat} onChange={updateFilters} required />
-            </div>
-            <div className="field">
-              <label htmlFor="lon">Longitude</label>
-              <input id="lon" name="lon" value={filters.lon} onChange={updateFilters} required />
-            </div>
             <div className="field">
               <label htmlFor="radius">Radius (km)</label>
               <input id="radius" name="radius" type="number" min="1" value={filters.radius} onChange={updateFilters} />
