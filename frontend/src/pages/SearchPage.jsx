@@ -579,20 +579,29 @@ function SearchPage({ token }) {
           const clientSecret = paymentResponse.clientSecret || '';
           const mockSession = String(clientSecret).startsWith('mock_secret_')
             || String(paymentResponse.intentId).startsWith('mock_pi_');
+          const fallbackRemainingSeconds = Number(paymentResponse?.remainingSeconds || 60);
+          const resolvedExpiresAt = paymentResponse?.expiresAt
+            || new Date(Date.now() + fallbackRemainingSeconds * 1000).toISOString();
 
           setPaymentSession({
             bookingId: booking.id,
+            spaceId,
             amount: Number(booking?.total_amount || fallbackAmount || 0),
             intentId: paymentResponse.intentId,
             clientSecret,
-            isMock: mockSession
+            isMock: mockSession,
+            expiresAt: resolvedExpiresAt
           });
           setNotice({ type: 'info', text: 'Booking created. Complete payment in the popup window.' });
         }
       } catch (paymentError) {
+        await cleanupPendingBooking(
+          { bookingId: booking.id, spaceId },
+          `Payment session open failed: ${paymentError.message}`
+        );
         setNotice({
           type: 'error',
-          text: `Booking created, but payment session could not be opened: ${paymentError.message}`
+          text: `Payment session could not be opened, so the booking was removed: ${paymentError.message}`
         });
       }
 
@@ -605,9 +614,32 @@ function SearchPage({ token }) {
     }
   }
 
+  async function cleanupPendingBooking(session, reason) {
+    if (!session?.bookingId) return;
+
+    try {
+      await apiRequest(`/bookings/bookings/${session.bookingId}/pending`, {
+        method: 'DELETE',
+        token,
+        body: { reason }
+      });
+    } catch (error) {
+      if (error.status !== 404 && error.status !== 409) {
+        throw error;
+      }
+    }
+
+    if (session.spaceId) {
+      await loadSlots(session.spaceId, { preserveNotice: true });
+      setSelectedSlotsBySpace((prev) => ({ ...prev, [session.spaceId]: [] }));
+    }
+  }
+
   function closePaymentModal() {
     if (paymentBusy) return;
+    const closedSession = paymentSession;
     setPaymentSession(null);
+    void cleanupPendingBooking(closedSession, 'Cancelled by user');
   }
 
   async function completeMockPayment() {
@@ -624,15 +656,53 @@ function SearchPage({ token }) {
       setNotice({ type: 'success', text: 'Payment completed successfully.' });
       setPaymentSession(null);
     } catch (error) {
+      await cleanupPendingBooking(paymentSession, `Mock payment failed: ${error.message}`);
       setNotice({ type: 'error', text: `Payment confirmation failed: ${error.message}` });
     } finally {
       setPaymentBusy(false);
     }
   }
 
-  function handleStripePaymentSuccess() {
-    setNotice({ type: 'success', text: 'Payment completed successfully.' });
+  async function handleStripePaymentSuccess() {
+    const session = paymentSession;
+
+    if (!session?.intentId) {
+      setNotice({ type: 'success', text: 'Payment completed successfully.' });
+      setPaymentSession(null);
+      return;
+    }
+
+    setPaymentBusy(true);
+    try {
+      await apiRequest('/payments/confirm-success', {
+        method: 'POST',
+        token,
+        body: { intentId: session.intentId }
+      });
+      setNotice({ type: 'success', text: 'Payment completed successfully.' });
+      setPaymentSession(null);
+    } catch (error) {
+      setNotice({ type: 'error', text: `Payment succeeded, but booking confirmation failed: ${error.message}` });
+    } finally {
+      setPaymentBusy(false);
+    }
+  }
+
+  async function handlePaymentExpired() {
+    const expiredSession = paymentSession;
     setPaymentSession(null);
+    await cleanupPendingBooking(expiredSession, 'Payment timed out');
+    setNotice({
+      type: 'error',
+      text: 'Payment window expired after 1 minute. Booking was removed; please rebook this slot.'
+    });
+  }
+
+  async function handleStripePaymentFailure(message) {
+    const failedSession = paymentSession;
+    setPaymentSession(null);
+    await cleanupPendingBooking(failedSession, message || 'Stripe payment failed');
+    setNotice({ type: 'error', text: `Payment failed. Booking removed. ${message || ''}`.trim() });
   }
 
   const selectedMapImages = getSpaceImages(selectedMapSpace || {});
@@ -1060,11 +1130,14 @@ function SearchPage({ token }) {
           amount={paymentSession.amount}
           intentId={paymentSession.intentId}
           clientSecret={paymentSession.clientSecret}
+          expiresAt={paymentSession.expiresAt}
           isMock={paymentSession.isMock}
           paymentBusy={paymentBusy}
           onMockPayment={completeMockPayment}
           onPaymentSuccess={handleStripePaymentSuccess}
+          onPaymentFailure={handleStripePaymentFailure}
           onCancel={closePaymentModal}
+          onExpired={handlePaymentExpired}
         />
       ) : null}
     </div>

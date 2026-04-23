@@ -1,7 +1,6 @@
 const db = require('../models/db');
 const redis = require('../models/redis');
 const http = require('http');
-const { processPayment } = require('./paymentService');
 const { parseUtcInput, toUtcIsoString } = require('../utils/dateTime');
 
 const LISTING_SERVICE_URL = process.env.LISTING_SERVICE_URL || 'http://localhost:4002';
@@ -15,6 +14,8 @@ const BOOKING_TIMESTAMP_FIELDS = [
   'cancelled_at',
   'completed_at'
 ];
+const PAYMENT_WINDOW_SECONDS = Math.max(1, Number(process.env.PAYMENT_UI_WINDOW_SECONDS || 60));
+const STALE_PENDING_RELEASE_SECONDS = Math.max(1, Number(process.env.STALE_PENDING_RELEASE_SECONDS || 120));
 
 function toDecimal(value) {
   return Number(Number(value).toFixed(2));
@@ -45,6 +46,12 @@ function normalizeBookingRow(row) {
   }
 
   return normalized;
+}
+
+function getPaymentWindow(now = new Date()) {
+  const startedAt = now;
+  const expiresAt = new Date(now.getTime() + PAYMENT_WINDOW_SECONDS * 1000);
+  return { startedAt, expiresAt };
 }
 
 async function publishBookingEvent(type, payload) {
@@ -152,27 +159,9 @@ async function createBooking(data) {
   const platformFee = 0;
   const taxAmount = 0;
   const totalAmount = toDecimal(subtotal + platformFee + taxAmount);
-
-  const paymentSuccess = await processPayment({
-    user_id,
-    space_id,
-    slot_count: slotCount,
-    start_slot_utc: start.toISOString(),
-    amount: totalAmount,
-    currency: 'inr',
-    metadata: {
-      user_id,
-      space_id,
-      slot_count: slotCount,
-      start_slot_utc: start.toISOString()
-    }
-  });
-  if (!paymentSuccess) {
-    throw new Error('Payment failed');
-  }
-
-  const status = listing.instant_book_enabled === false ? 'pending' : 'confirmed';
+  const status = 'pending';
   const slotWindows = buildSlotSequence(start, slotCount);
+  const { startedAt: paymentWindowStartedAt, expiresAt: paymentWindowExpiresAt } = getPaymentWindow();
 
   const client = await db.connect();
   try {
@@ -188,6 +177,26 @@ async function createBooking(data) {
         return normalizeBookingRow(existing.rows[0]);
       }
     }
+
+    const slotStarts = slotWindows.map((slotWindow) => slotWindow.slotStart.toISOString());
+    const staleCutoff = new Date(Date.now() - STALE_PENDING_RELEASE_SECONDS * 1000);
+
+    await client.query(
+      `WITH stale_bookings AS (
+         SELECT DISTINCT b.id
+         FROM bookings b
+         JOIN booking_slots bs ON bs.booking_id = b.id
+         WHERE b.status = 'pending'
+           AND b.payment_window_started_at <= $1
+           AND bs.space_id = $2
+           AND bs.occupancy_status = 'active'
+           AND bs.slot_start_utc = ANY($3::timestamp[])
+       )
+       DELETE FROM bookings b
+       USING stale_bookings s
+       WHERE b.id = s.id`,
+      [staleCutoff.toISOString(), space_id, slotStarts]
+    );
 
     const insertBooking = await client.query(
       `INSERT INTO bookings (
@@ -207,9 +216,11 @@ async function createBooking(data) {
          tax_amount,
          total_amount,
          cancellation_policy_snapshot,
+         payment_window_started_at,
+         payment_window_expires_at,
          idempotency_key
        ) VALUES (
-         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
        )
        RETURNING *`,
       [
@@ -229,6 +240,8 @@ async function createBooking(data) {
         taxAmount,
         totalAmount,
         listing.cancellation_policy || 'moderate',
+        paymentWindowStartedAt.toISOString(),
+        paymentWindowExpiresAt.toISOString(),
         idempotency_key || null
       ]
     );
@@ -288,7 +301,22 @@ async function createBooking(data) {
   }
 }
 
+async function cleanupStalePendingBookings() {
+  const staleCutoff = new Date(Date.now() - STALE_PENDING_RELEASE_SECONDS * 1000);
+  const result = await db.query(
+    `DELETE FROM bookings
+     WHERE status = 'pending'
+       AND payment_window_started_at <= $1
+     RETURNING id`,
+    [staleCutoff.toISOString()]
+  );
+  return result.rows;
+}
+
 async function updateBookingStatus(bookingId, status, changedBy = null, reason = null) {
+  const parsedChangedBy = Number(changedBy);
+  const resolvedChangedBy = Number.isInteger(parsedChangedBy) && parsedChangedBy > 0 ? parsedChangedBy : 0;
+
   const client = await db.connect();
   try {
     await client.query('BEGIN');
@@ -318,7 +346,7 @@ async function updateBookingStatus(bookingId, status, changedBy = null, reason =
     await client.query(
       `INSERT INTO booking_status_history (booking_id, old_status, new_status, changed_by, reason)
        VALUES ($1, $2, $3, $4, $5)`,
-      [bookingId, current.status, status, changedBy, reason]
+      [bookingId, current.status, status, resolvedChangedBy, reason]
     );
 
     await client.query('COMMIT');
@@ -425,6 +453,50 @@ async function cancelBooking(bookingId, actorUserId, role, reason) {
   }
 }
 
+async function deletePendingBooking(bookingId, actorUserId, role, reason = null) {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    const found = await client.query('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [bookingId]);
+    if (found.rows.length === 0) {
+      throw new Error('Booking not found');
+    }
+
+    const booking = found.rows[0];
+    const canDelete =
+      role === 'admin' ||
+      Number(booking.user_id) === Number(actorUserId) ||
+      Number(booking.host_id) === Number(actorUserId);
+
+    if (!canDelete) {
+      throw new Error('Forbidden');
+    }
+
+    if (booking.status !== 'pending') {
+      throw new Error('Only pending bookings can be deleted');
+    }
+
+    await client.query('DELETE FROM bookings WHERE id = $1', [bookingId]);
+    await client.query('COMMIT');
+
+    await publishBookingEvent('BOOKING_CANCELLED', {
+      booking_id: booking.id,
+      space_id: booking.space_id,
+      cancelled_at: new Date().toISOString(),
+      cancelled_by: actorUserId,
+      reason: reason || 'Payment not completed; booking deleted'
+    });
+
+    return { deleted: true, booking_id: booking.id, space_id: booking.space_id };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function getReservedSlots(spaceId, from, to) {
   const fromDate = new Date(`${from}T00:00:00.000Z`);
   const toDateInclusive = new Date(`${to}T00:00:00.000Z`);
@@ -436,7 +508,9 @@ async function getReservedSlots(spaceId, from, to) {
   const toExclusive = new Date(toDateInclusive.getTime() + 24 * 60 * 60 * 1000);
 
   const result = await db.query(
-    `SELECT slot_start_utc, slot_end_utc
+    `SELECT
+       to_char(slot_start_utc, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS slot_start_utc,
+       to_char(slot_end_utc, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS slot_end_utc
      FROM booking_slots
      WHERE space_id = $1
        AND occupancy_status = 'active'
@@ -458,5 +532,7 @@ module.exports = {
   getBookingsByUser,
   getBookingsByHost,
   cancelBooking,
-  getReservedSlots
+  deletePendingBooking,
+  getReservedSlots,
+  cleanupStalePendingBookings
 };

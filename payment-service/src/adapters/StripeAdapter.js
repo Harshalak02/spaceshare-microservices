@@ -8,8 +8,15 @@ class StripeAdapter extends PaymentAdapter {
             stringifiedMetadata[key] = String(value);
         }
 
+        // Enforce minimum amount for Stripe (approx 50 cents USD) to prevent amount_too_small errors
+        const minimumAmountInr = 50;
+        let finalAmount = amount;
+        if (currency.toLowerCase() === 'inr' && amount < minimumAmountInr) {
+            finalAmount = minimumAmountInr;
+        }
+
         const paymentIntent = await stripe.paymentIntents.create({
-            amount: Math.round(amount * 100), // Stripe expects cents
+            amount: Math.round(finalAmount * 100), // Stripe expects cents
             currency: currency,
             metadata: stringifiedMetadata,
         });
@@ -17,7 +24,7 @@ class StripeAdapter extends PaymentAdapter {
         return {
             clientSecret: paymentIntent.client_secret,
             intentId: paymentIntent.id,
-            amount: amount,
+            amount: finalAmount,
             currency: currency,
             status: paymentIntent.status
         };

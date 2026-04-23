@@ -76,8 +76,9 @@ function toCacheDate(dateValue) {
   return DateTime.fromJSDate(dateValue).toISODate();
 }
 
-function toIsoUtc(value) {
-  return DateTime.fromISO(String(value), { zone: 'utc' }).toUTC().toISO({ suppressMilliseconds: true });
+function toUtcMillis(value) {
+  const dt = DateTime.fromISO(String(value), { zone: 'utc' }).toUTC();
+  return dt.isValid ? dt.toMillis() : null;
 }
 
 async function invalidateSlotCache(spaceId) {
@@ -578,7 +579,9 @@ async function getSlots(spaceId, options) {
 
   const reservedSlots = await fetchReservedSlots(spaceId, from, to);
   const reservedSet = new Set(
-    reservedSlots.map((slot) => toIsoUtc(slot.slot_start_utc))
+    reservedSlots
+      .map((slot) => toUtcMillis(slot.slot_start_utc))
+      .filter((value) => Number.isFinite(value))
   );
 
   const slots = [];
@@ -593,9 +596,10 @@ async function getSlots(spaceId, options) {
 
       while (slotStart < dayEnd) {
         const slotEnd = slotStart.plus({ hours: 1 });
-        const startUtc = slotStart.toUTC().toISO({ suppressMilliseconds: true });
+        const startUtcDateTime = slotStart.toUTC();
+        const startUtc = startUtcDateTime.toISO({ suppressMilliseconds: true });
         const endUtc = slotEnd.toUTC().toISO({ suppressMilliseconds: true });
-        const status = reservedSet.has(startUtc) ? 'reserved' : 'available';
+        const status = reservedSet.has(startUtcDateTime.toMillis()) ? 'reserved' : 'available';
 
         if (includeUnavailable || status === 'available') {
           slots.push({

@@ -22,12 +22,20 @@ router.get('/bookings/my', authMiddleware, controller.getMy);
 router.get('/bookings/host/my', authMiddleware, controller.getHostMy);
 router.post('/book', authMiddleware, controller.create);
 router.post('/bookings/:booking_id/cancel', authMiddleware, controller.cancel);
+router.delete('/bookings/:booking_id/pending', authMiddleware, controller.deletePending);
+router.delete('/:booking_id/pending', authMiddleware, controller.deletePending);
 router.get('/bookings/:user_id', authMiddleware, controller.getByUser);
 
 router.get(
 	'/internal/listings/:space_id/reserved-slots',
 	internalServiceAuth,
 	controller.getReservedSlots
+);
+
+router.post(
+	'/internal/bookings/:booking_id/confirm',
+	internalServiceAuth,
+	controller.confirmInternalPayment
 );
 
 module.exports = router;

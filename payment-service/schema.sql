@@ -5,8 +5,13 @@ CREATE TABLE IF NOT EXISTS payments (
   provider VARCHAR(50) NOT NULL,
   provider_reference VARCHAR(255),
   status VARCHAR(50) DEFAULT 'pending',
+  payment_session_started_at TIMESTAMP,
+  payment_session_expires_at TIMESTAMP,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_session_started_at TIMESTAMP;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_session_expires_at TIMESTAMP;
 
 DO $$
 BEGIN

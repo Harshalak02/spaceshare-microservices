@@ -25,9 +25,13 @@ function toWindowDisplay(booking) {
     return { startText: 'N/A', endText: 'N/A' };
   }
 
+  const formatIST = (isoString) => {
+    return new Date(isoString).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }).toLowerCase();
+  };
+
   return {
-    startText: startUtc,
-    endText: endUtc
+    startText: formatIST(startUtc),
+    endText: formatIST(endUtc)
   };
 }
 
@@ -68,7 +72,7 @@ async function handleBookingConfirmed(booking) {
 
     // Host Notification
     const hostSubject = `New Booking: ${space.title}`;
-    const hostBody = `Hello,\n\nYou have a new confirmed booking for your space "${space.title}".\nCustomer ID: ${customerId}\nTime: ${startText} to ${endText}.\n\nSpaceShare Team`;
+    const hostBody = `Hello,\n\nYou have a new confirmed booking for your space "${space.title}".\nCustomer ID: ${customerId}\nTime: ${startText} to ${endText}.\n\nSpaceShare Team\n\nDelivered by MailerSend`;
     await sendAndLogNotification(hostId, 'BOOKING_CONFIRMED', host.email, hostSubject, hostBody, channel);
 
   } catch (error) {

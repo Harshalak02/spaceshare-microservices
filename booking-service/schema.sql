@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS bookings (
   refund_amount NUMERIC(12,2),
   completed_at TIMESTAMPTZ,
   idempotency_key VARCHAR(128),
+  payment_window_started_at TIMESTAMP,
+  payment_window_expires_at TIMESTAMP,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -93,6 +95,8 @@ BEGIN
     ALTER TABLE bookings ALTER COLUMN completed_at TYPE TIMESTAMPTZ USING completed_at AT TIME ZONE 'UTC';
   END IF;
 END $$;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payment_window_started_at TIMESTAMP;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payment_window_expires_at TIMESTAMP;
 
 CREATE TABLE IF NOT EXISTS booking_slots (
   id BIGSERIAL PRIMARY KEY,

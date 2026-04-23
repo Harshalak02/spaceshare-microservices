@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { apiRequest } from '../services/api';
 import { parseUtcDate } from '../utils/dateTime';
-
+const DISPLAY_TIME_ZONE = 'Asia/Kolkata';
+const DISPLAY_TIME_ZONE_LABEL = 'India Standard Time (IST)';
 function parseDate(value) {
     return parseUtcDate(value);
 }
@@ -13,7 +14,8 @@ function formatDate(value) {
         weekday: 'short',
         day: '2-digit',
         month: 'short',
-        year: 'numeric'
+        year: 'numeric',
+        timeZone: DISPLAY_TIME_ZONE
     });
 }
 
@@ -22,7 +24,9 @@ function formatTime(value) {
     if (!parsed) return '-';
     return parsed.toLocaleTimeString([], {
         hour: 'numeric',
-        minute: '2-digit'
+        minute: '2-digit',
+        hour12: true,
+        timeZone: DISPLAY_TIME_ZONE
     });
 }
 
@@ -35,7 +39,10 @@ function formatDateTime(value) {
         month: 'short',
         year: 'numeric',
         hour: 'numeric',
-        minute: '2-digit'
+        minute: '2-digit',
+        hour12: true,
+        timeZone: DISPLAY_TIME_ZONE,
+        timeZoneName: 'short'
     });
 }
 
@@ -153,6 +160,7 @@ function MyBookingsPage({ token }) {
             <div className="hero-strip">
                 <h2>My Bookings</h2>
                 <p>Track booking lifecycle and cancel active reservations when needed.</p>
+                <p className="tiny">All booking times are shown in {DISPLAY_TIME_ZONE_LABEL}.</p>
             </div>
 
             <div className="btn-row">

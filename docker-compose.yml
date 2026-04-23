@@ -103,6 +103,8 @@ services:
       - ./payment-service/.env
     environment:
       REDIS_URL: redis://redis:6379
+      BOOKING_SERVICE_URL: http://booking-service:4004
+      INTERNAL_SERVICE_TOKEN: spaceshare-internal-token
     ports:
       - '4008:4008'
     depends_on:

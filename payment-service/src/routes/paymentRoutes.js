@@ -8,6 +8,7 @@ const router = express.Router();
 // Payment endpoints
 router.post('/create-session', authMiddleware, controller.createSession);
 router.post('/simulate-success', authMiddleware, controller.simulateSuccess); // For mock tests
+router.post('/confirm-success', authMiddleware, controller.confirmClientSuccess);
 router.post('/webhook', express.raw({type: 'application/json'}), controller.webhook);
 router.post('/internal/charge', internalAuthMiddleware, controller.internalCharge);
 
