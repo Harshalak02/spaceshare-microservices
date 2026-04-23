@@ -26,6 +26,22 @@ async function simulateSuccess(req, res) {
     }
 }
 
+async function confirmClientSuccess(req, res) {
+    try {
+        const { intentId } = req.body;
+        if (!intentId) return res.status(400).json({ message: 'intentId required '});
+
+        const payment = await paymentService.handleWebhook(intentId, 'succeeded');
+        if (!payment) {
+            return res.status(404).json({ message: 'Payment intent not found' });
+        }
+
+        return res.json({ success: true, booking_id: payment.booking_id, payment_id: payment.id });
+    } catch (error) {
+        return res.status(500).json({ message: 'Failed to confirm payment', error: error.message });
+    }
+}
+
 async function webhook(req, res) {
     // Basic stripe webhook handling idea:
     // In production, you'd use raw body and verify headers.
@@ -54,4 +70,4 @@ async function internalCharge(req, res) {
     }
 }
 
-module.exports = { createSession, simulateSuccess, webhook, internalCharge };
+module.exports = { createSession, simulateSuccess, confirmClientSuccess, webhook, internalCharge };

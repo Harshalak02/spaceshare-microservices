@@ -1,10 +1,10 @@
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import { loadStripe } from '@stripe/stripe-js';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 const stripePublishableKey = import.meta.env.VITE_STRIPE_PUBLIC_KEY;
 
-function CheckoutForm({ onPaymentSuccess, onCancel }) {
+function CheckoutForm({ onPaymentSuccess, onPaymentFailure, onCancel, isExpired }) {
   const stripe = useStripe();
   const elements = useElements();
   const [message, setMessage] = useState(null);
@@ -13,7 +13,7 @@ function CheckoutForm({ onPaymentSuccess, onCancel }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (!stripe || !elements) return;
+    if (!stripe || !elements || isExpired) return;
 
     setIsProcessing(true);
 
@@ -24,11 +24,17 @@ function CheckoutForm({ onPaymentSuccess, onCancel }) {
 
     if (error) {
       setMessage(error.message);
+      if (onPaymentFailure) {
+        onPaymentFailure(error.message || 'Payment failed');
+      }
     } else if (paymentIntent && paymentIntent.status === 'succeeded') {
       setMessage('Payment successful.');
       onPaymentSuccess();
     } else {
       setMessage('Payment requires additional action.');
+      if (onPaymentFailure) {
+        onPaymentFailure('Payment requires additional action.');
+      }
     }
 
     setIsProcessing(false);
@@ -38,7 +44,7 @@ function CheckoutForm({ onPaymentSuccess, onCancel }) {
     <form onSubmit={handleSubmit} className="payment-form">
       <PaymentElement />
       <div className="btn-row" style={{ marginTop: '0.75rem' }}>
-        <button className="btn btn-primary" disabled={isProcessing || !stripe || !elements} type="submit">
+        <button className="btn btn-primary" disabled={isProcessing || !stripe || !elements || isExpired} type="submit">
           {isProcessing ? (
             <span className="btn-with-spinner">
               <span className="btn-spinner" aria-hidden="true" />
@@ -55,16 +61,62 @@ function CheckoutForm({ onPaymentSuccess, onCancel }) {
   );
 }
 
+function formatCountdown(seconds) {
+  const safeSeconds = Math.max(0, Number(seconds) || 0);
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainder = safeSeconds % 60;
+  return `${minutes}:${String(remainder).padStart(2, '0')}`;
+}
+
 export default function PaymentModal({
   clientSecret,
   amount,
   intentId,
+  expiresAt,
   isMock = false,
   paymentBusy = false,
   onMockPayment,
   onPaymentSuccess,
-  onCancel
+  onPaymentFailure,
+  onCancel,
+  onExpired
 }) {
+  const initialRemainingSeconds = expiresAt
+    ? Math.max(0, Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 1000))
+    : 0;
+  const [remainingSeconds, setRemainingSeconds] = useState(initialRemainingSeconds);
+  const expiryTriggeredRef = useRef(false);
+
+  useEffect(() => {
+    const freshRemaining = expiresAt
+      ? Math.max(0, Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 1000))
+      : 0;
+    setRemainingSeconds(freshRemaining);
+    expiryTriggeredRef.current = false;
+  }, [expiresAt, intentId]);
+
+  useEffect(() => {
+    if (!expiresAt) return undefined;
+
+    const interval = setInterval(() => {
+      const nextRemaining = Math.max(0, Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 1000));
+      setRemainingSeconds(nextRemaining);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [expiresAt]);
+
+  useEffect(() => {
+    if (remainingSeconds > 0 || expiryTriggeredRef.current) return;
+    expiryTriggeredRef.current = true;
+    if (onExpired) {
+      onExpired();
+      return;
+    }
+    onCancel();
+  }, [remainingSeconds, onCancel, onExpired]);
+
+  const isExpired = remainingSeconds <= 0;
   const stripePromise = useMemo(() => {
     if (isMock || !stripePublishableKey) return null;
     return loadStripe(stripePublishableKey);
@@ -80,7 +132,12 @@ export default function PaymentModal({
     <div className="modal-backdrop">
       <div className="payment-modal fade" role="dialog" aria-modal="true" aria-label="Complete payment">
         <div className="payment-modal-header">
-          <h3>Complete Your Payment {amount ? `(INR ${Number(amount).toFixed(2)})` : ''}</h3>
+          <div>
+            <h3>Complete Your Payment {amount ? `(INR ${Number(amount).toFixed(2)})` : ''}</h3>
+            <div className={`payment-countdown ${isExpired ? 'expired' : ''}`}>
+              Time remaining: {formatCountdown(remainingSeconds)}
+            </div>
+          </div>
           <button className="btn btn-muted" type="button" onClick={onCancel} disabled={paymentBusy}>
             Close
           </button>
@@ -97,7 +154,7 @@ export default function PaymentModal({
                 className="btn btn-primary"
                 type="button"
                 onClick={onMockPayment}
-                disabled={paymentBusy || !onMockPayment}
+                disabled={paymentBusy || !onMockPayment || isExpired}
               >
                 {paymentBusy ? (
                   <span className="btn-with-spinner">
@@ -113,7 +170,12 @@ export default function PaymentModal({
           </div>
         ) : stripeReady ? (
           <Elements stripe={stripePromise} options={options}>
-            <CheckoutForm onPaymentSuccess={onPaymentSuccess} onCancel={onCancel} />
+            <CheckoutForm
+              onPaymentSuccess={onPaymentSuccess}
+              onPaymentFailure={onPaymentFailure}
+              onCancel={onCancel}
+              isExpired={isExpired}
+            />
           </Elements>
         ) : (
           <div className="notice info">

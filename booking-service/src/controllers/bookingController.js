@@ -103,6 +103,31 @@ async function cancel(req, res) {
   }
 }
 
+async function deletePending(req, res) {
+  try {
+    const bookingId = Number(req.params.booking_id);
+    if (!Number.isInteger(bookingId) || bookingId <= 0) {
+      return res.status(400).json({ message: 'Invalid booking_id' });
+    }
+
+    const deleted = await service.deletePendingBooking(
+      bookingId,
+      req.user.userId,
+      req.user.role,
+      req.body?.reason
+    );
+
+    res.json(deleted);
+  } catch (error) {
+    const status =
+      error.message === 'Booking not found' ? 404 :
+      error.message === 'Forbidden' ? 403 :
+      error.message.includes('Only pending bookings') ? 409 :
+      500;
+    res.status(status).json({ message: error.message });
+  }
+}
+
 async function getReservedSlots(req, res) {
   try {
     const spaceId = Number(req.params.space_id);
@@ -128,11 +153,37 @@ async function getReservedSlots(req, res) {
   }
 }
 
+async function confirmInternalPayment(req, res) {
+  try {
+    const bookingId = Number(req.params.booking_id);
+    if (!Number.isInteger(bookingId) || bookingId <= 0) {
+      return res.status(400).json({ message: 'Invalid booking_id' });
+    }
+
+    const updated = await service.updateBookingStatus(
+      bookingId,
+      'confirmed',
+      0,
+      'Payment succeeded (internal confirmation)'
+    );
+
+    if (!updated) {
+      return res.status(404).json({ message: 'Booking not found' });
+    }
+
+    return res.json(updated);
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to confirm booking' });
+  }
+}
+
 module.exports = {
   create,
   getMy,
   getByUser,
   getHostMy,
   cancel,
-  getReservedSlots
+  deletePending,
+  getReservedSlots,
+  confirmInternalPayment
 };

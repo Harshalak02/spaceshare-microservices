@@ -3,13 +3,48 @@ const StripeAdapter = require('../adapters/StripeAdapter');
 const db = require('../models/db');
 const redis = require('../models/redis');
 
+const BOOKING_SERVICE_URL = process.env.BOOKING_SERVICE_URL || 'http://localhost:4004';
+const INTERNAL_SERVICE_TOKEN = process.env.INTERNAL_SERVICE_TOKEN || '';
+const BOOKING_CONFIRM_TIMEOUT_MS = Number(process.env.BOOKING_CONFIRM_TIMEOUT_MS || 5000);
+
 class PaymentService {
     constructor() {
         this.providerName = (process.env.PAYMENT_PROVIDER || 'mock').toLowerCase();
+        this.sessionWindowSeconds = Math.max(1, Number(process.env.PAYMENT_UI_WINDOW_SECONDS || 60));
         if (this.providerName === 'stripe') {
             this.adapter = new StripeAdapter();
         } else {
             this.adapter = new MockAdapter();
+        }
+    }
+
+    async confirmBookingStatus(bookingId) {
+        if (!BOOKING_SERVICE_URL) {
+            return;
+        }
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), BOOKING_CONFIRM_TIMEOUT_MS);
+
+        try {
+            const response = await fetch(
+                `${BOOKING_SERVICE_URL}/internal/bookings/${bookingId}/confirm`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(INTERNAL_SERVICE_TOKEN ? { 'X-Internal-Token': INTERNAL_SERVICE_TOKEN } : {})
+                    },
+                    signal: controller.signal
+                }
+            );
+
+            if (!response.ok) {
+                const body = await response.text();
+                throw new Error(body || `Booking confirmation failed with status ${response.status}`);
+            }
+        } finally {
+            clearTimeout(timeout);
         }
     }
 
@@ -40,15 +75,24 @@ class PaymentService {
     }
 
     async createSession(bookingId, amount) {
+        const now = new Date();
+        const expiresAt = new Date(now.getTime() + this.sessionWindowSeconds * 1000);
+
         // Check if there's already a pending payment
         let result = await db.query('SELECT * FROM payments WHERE booking_id = $1', [bookingId]);
         
         let paymentRecord;
         if (result.rows.length === 0) {
             result = await db.query(
-                `INSERT INTO payments (booking_id, amount, provider, status)
-                 VALUES ($1, $2, $3, 'pending') RETURNING *`,
-                [bookingId, amount, process.env.PAYMENT_PROVIDER || 'mock']
+                `INSERT INTO payments (booking_id, amount, provider, status, payment_session_started_at, payment_session_expires_at)
+                 VALUES ($1, $2, $3, 'pending', $4, $5) RETURNING *`,
+                [
+                    bookingId,
+                    amount,
+                    process.env.PAYMENT_PROVIDER || 'mock',
+                    now.toISOString(),
+                    expiresAt.toISOString()
+                ]
             );
             paymentRecord = result.rows[0];
         } else {
@@ -60,6 +104,9 @@ class PaymentService {
                     clientSecret: null,
                     status: paymentRecord.status,
                     alreadyPaid: true,
+                    expiresAt: paymentRecord.payment_session_expires_at || null,
+                    remainingSeconds: 0,
+                    sessionWindowSeconds: this.sessionWindowSeconds,
                     message: 'Payment already succeeded for this booking'
                 };
             }
@@ -68,9 +115,25 @@ class PaymentService {
         const intent = await this.adapter.createPaymentIntent(amount, 'inr', { booking_id: bookingId, payment_id: paymentRecord.id });
         
         // Update provider_reference
-        await db.query('UPDATE payments SET provider_reference = $1 WHERE id = $2', [intent.intentId, paymentRecord.id]);
+        await db.query(
+            `UPDATE payments
+             SET provider_reference = $1,
+                 status = 'pending',
+                 payment_session_started_at = $2,
+                 payment_session_expires_at = $3
+             WHERE id = $4`,
+            [intent.intentId, now.toISOString(), expiresAt.toISOString(), paymentRecord.id]
+        );
 
-        return { clientSecret: intent.clientSecret, intentId: intent.intentId, paymentId: paymentRecord.id };
+        return {
+            clientSecret: intent.clientSecret,
+            intentId: intent.intentId,
+            paymentId: paymentRecord.id,
+            status: 'pending',
+            expiresAt: expiresAt.toISOString(),
+            remainingSeconds: this.sessionWindowSeconds,
+            sessionWindowSeconds: this.sessionWindowSeconds
+        };
     }
 
     async handleWebhook(intentId, status) {
@@ -78,6 +141,13 @@ class PaymentService {
         const payment = result.rows[0];
 
         if (payment && status === 'succeeded') {
+            try {
+                await this.confirmBookingStatus(payment.booking_id);
+                console.log(`✅ [payment-service] Booking ${payment.booking_id} confirmed directly in booking-service`);
+            } catch (error) {
+                console.error(`❌ [payment-service] Direct booking confirmation failed for booking ${payment.booking_id}:`, error.message);
+            }
+
             await redis.publish('events', JSON.stringify({
                 type: 'PAYMENT_SUCCESS',
                 timestamp: new Date().toISOString(),

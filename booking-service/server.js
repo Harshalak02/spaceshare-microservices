@@ -4,6 +4,7 @@ const Redis = require('ioredis');
 const bookingService = require('./src/services/bookingService');
 
 const PORT = process.env.PORT || 4004;
+const STALE_PENDING_CLEANUP_INTERVAL_MS = Number(process.env.STALE_PENDING_CLEANUP_INTERVAL_MS || 30000);
 
 const subscriber = new Redis(process.env.REDIS_URL);
 
@@ -22,7 +23,12 @@ subscriber.on('message', async (_channel, message) => {
 		const bookingId = Number(event.payload?.booking_id);
 		if (!Number.isInteger(bookingId) || bookingId <= 0) return;
 
-		const updated = await bookingService.updateBookingStatus(bookingId, 'confirmed');
+		const updated = await bookingService.updateBookingStatus(
+			bookingId,
+			'confirmed',
+			0,
+			'Payment succeeded'
+		);
 		if (updated) {
 			console.log(`✅ [booking-service] PAYMENT_SUCCESS processed for booking ${bookingId}`);
 		}
@@ -30,5 +36,18 @@ subscriber.on('message', async (_channel, message) => {
 		console.error('❌ [booking-service] Failed to process payment event:', error.message);
 	}
 });
+
+// if (STALE_PENDING_CLEANUP_INTERVAL_MS > 0) {
+// 	setInterval(async () => {
+// 		try {
+// 			const deleted = await bookingService.cleanupStalePendingBookings();
+// 			if (deleted.length > 0) {
+// 				console.log(`✅ [booking-service] Cleaned ${deleted.length} stale pending booking(s)`);
+// 			}
+// 		} catch (error) {
+// 			console.error('❌ [booking-service] Stale booking cleanup failed:', error.message);
+// 		}
+// 	}, STALE_PENDING_CLEANUP_INTERVAL_MS);
+// }
 
 app.listen(PORT, () => console.log(`Booking service running on ${PORT}`));
