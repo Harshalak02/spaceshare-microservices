@@ -57,6 +57,11 @@ function formatDate(value) {
     return parsed.toLocaleString();
 }
 
+function normalizeImageUrls(value) {
+    if (!Array.isArray(value)) return [];
+    return value.map((item) => String(item || '').trim()).filter(Boolean);
+}
+
 function MyListingsPage({ token, user }) {
     const [spaces, setSpaces] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -116,7 +121,8 @@ function MyListingsPage({ token, user }) {
             lon: space.lon,
             price_per_hour: space.price_per_hour,
             capacity: space.capacity,
-            timezone: space.timezone || 'UTC'
+            timezone: space.timezone || 'UTC',
+            image_urls_text: normalizeImageUrls(space.image_urls).join('\n')
         });
     }
 
@@ -139,7 +145,11 @@ function MyListingsPage({ token, user }) {
                     lat: Number(editForm.lat),
                     lon: Number(editForm.lon),
                     price_per_hour: Number(editForm.price_per_hour),
-                    capacity: Number(editForm.capacity)
+                    capacity: Number(editForm.capacity),
+                    image_urls: editForm.image_urls_text
+                        .split('\n')
+                        .map((item) => item.trim())
+                        .filter(Boolean)
                 }
             });
 
@@ -348,6 +358,13 @@ function MyListingsPage({ token, user }) {
                         <div className="stack" style={{ gap: '0.45rem' }}>
                             <h3>{space.title}</h3>
                             <p className="tiny">{space.description || 'No description provided.'}</p>
+                            {Array.isArray(space.image_urls) && space.image_urls.length > 0 ? (
+                                <div className="listing-image-row">
+                                    {space.image_urls.slice(0, 4).map((url, index) => (
+                                        <img key={`${space.id}-thumb-${index}`} src={url} alt={`${space.title} ${index + 1}`} className="listing-thumb" />
+                                    ))}
+                                </div>
+                            ) : null}
                             <div className="meta-row">
                                 <span>{space.location_name || `${space.lat}, ${space.lon}`}</span>
                                 <span>INR {space.price_per_hour}/hour</span>
@@ -381,6 +398,15 @@ function MyListingsPage({ token, user }) {
                             <div className="field">
                                 <label>Description</label>
                                 <textarea value={editForm.description} onChange={(event) => setEditForm((prev) => ({ ...prev, description: event.target.value }))} />
+                            </div>
+
+                            <div className="field">
+                                <label>Image URLs (one per line)</label>
+                                <textarea
+                                    value={editForm.image_urls_text}
+                                    onChange={(event) => setEditForm((prev) => ({ ...prev, image_urls_text: event.target.value }))}
+                                    placeholder="https://example.com/image-1.jpg"
+                                />
                             </div>
 
                             <div className="grid-3">

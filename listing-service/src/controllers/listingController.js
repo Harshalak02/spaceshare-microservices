@@ -21,7 +21,7 @@ async function getOwnedSpace(spaceId, userId) {
 
 async function create(req, res) {
   try {
-    const { title, description, location_name, lat, lon, price_per_hour, capacity, timezone } = req.body;
+    const { title, description, location_name, lat, lon, price_per_hour, capacity, timezone, image_urls } = req.body;
 
     // Validation
     if (!title || lat == null || lon == null || price_per_hour == null || capacity == null) {
@@ -35,7 +35,7 @@ async function create(req, res) {
     }
 
     const space = await listingService.createSpace({
-      title, description, location_name, lat, lon, price_per_hour, capacity, timezone,
+      title, description, location_name, lat, lon, price_per_hour, capacity, timezone, image_urls,
       owner_id: req.user.userId
     });
     res.status(201).json(space);
@@ -158,7 +158,7 @@ async function update(req, res) {
       return res.status(403).json({ message: 'You are not the owner of this space' });
     }
 
-    const { title, description, location_name, lat, lon, price_per_hour, capacity, timezone } = req.body;
+    const { title, description, location_name, lat, lon, price_per_hour, capacity, timezone, image_urls } = req.body;
     if (capacity != null && Number(capacity) <= 0) {
       return res.status(400).json({ message: 'capacity must be greater than 0' });
     }
@@ -174,7 +174,8 @@ async function update(req, res) {
       lon: lon != null ? lon : space.lon,
       price_per_hour: price_per_hour != null ? price_per_hour : space.price_per_hour,
       capacity: capacity != null ? capacity : space.capacity,
-      timezone: timezone != null ? timezone : space.timezone
+      timezone: timezone != null ? timezone : space.timezone,
+      image_urls: image_urls != null ? image_urls : space.image_urls
     });
     res.json(updated);
   } catch (error) {

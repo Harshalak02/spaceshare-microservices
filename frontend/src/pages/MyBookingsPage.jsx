@@ -74,11 +74,36 @@ function bookingStatusClass(status) {
     return 'neutral';
 }
 
+function normalizeImageUrls(value) {
+    if (!Array.isArray(value)) return [];
+    return value.map((item) => String(item || '').trim()).filter(Boolean);
+}
+
 function MyBookingsPage({ token }) {
     const [bookings, setBookings] = useState([]);
+    const [listingDetailsById, setListingDetailsById] = useState({});
     const [busy, setBusy] = useState(true);
     const [cancelBusyMap, setCancelBusyMap] = useState({});
     const [notice, setNotice] = useState({ type: '', text: '' });
+
+    async function loadListingDetails(spaceIds) {
+        const uniqueIds = [...new Set(spaceIds.map((id) => Number(id)).filter(Number.isFinite))];
+        if (uniqueIds.length === 0) {
+            setListingDetailsById({});
+            return;
+        }
+
+        const entries = await Promise.all(uniqueIds.map(async (spaceId) => {
+            try {
+                const listing = await apiRequest(`/listings/spaces/${spaceId}`, { token });
+                return [spaceId, listing];
+            } catch {
+                return [spaceId, null];
+            }
+        }));
+
+        setListingDetailsById(Object.fromEntries(entries));
+    }
 
     async function loadBookings() {
         setBusy(true);
@@ -92,6 +117,7 @@ function MyBookingsPage({ token }) {
                 }
             );
             setBookings(sorted);
+            await loadListingDetails(sorted.map((booking) => booking.space_id));
             setNotice({ type: '', text: '' });
         } catch (error) {
             setNotice({ type: 'error', text: `Failed to load bookings: ${error.message}` });
@@ -149,18 +175,47 @@ function MyBookingsPage({ token }) {
                 const startAt = booking.start_slot_utc || booking.start_time;
                 const endAt = booking.end_slot_utc || booking.end_time;
                 const duration = getDurationLabel(booking);
+                const listing = listingDetailsById[Number(booking.space_id)] || null;
+                const listingImages = normalizeImageUrls(listing?.image_urls);
+                const listingTitle = listing?.title || `Space #${booking.space_id}`;
 
                 return (
                     <article className="card booking-card" key={booking.id}>
                         <div className="card-title-row">
                             <div className="stack" style={{ gap: '0.18rem' }}>
                                 <h3>Booking #{booking.id}</h3>
+                                <p className="tiny">{listingTitle}</p>
                                 <p className="tiny">Created {formatDateTime(booking.created_at)}</p>
                             </div>
                             <span className={`pill ${bookingStatusClass(status)}`}>{toStatusLabel(status)}</span>
                         </div>
 
+                        {listingImages[0] ? (
+                            <div className="listing-cover-wrap booking-listing-cover-wrap">
+                                <img src={listingImages[0]} alt={listingTitle} className="booking-listing-cover" />
+                            </div>
+                        ) : null}
+
                         <div className="booking-card-grid">
+                            <section className="booking-module">
+                                <div className="booking-module-title">Listing</div>
+                                <div className="booking-module-value">{listingTitle}</div>
+                                <div className="booking-key-list">
+                                    <div className="booking-key-row">
+                                        <span>Listing ID</span>
+                                        <strong>#{booking.space_id}</strong>
+                                    </div>
+                                    <div className="booking-key-row">
+                                        <span>Location</span>
+                                        <strong>{listing?.location_name || '-'}</strong>
+                                    </div>
+                                    <div className="booking-key-row">
+                                        <span>Capacity</span>
+                                        <strong>{listing?.capacity || booking.guest_count || '-'}</strong>
+                                    </div>
+                                </div>
+                            </section>
+
                             <section className="booking-module">
                                 <div className="booking-module-title">Schedule</div>
                                 <div className="booking-module-value">{formatDate(startAt)}</div>

@@ -28,7 +28,7 @@ async function searchSpaces(params) {
   const lonDelta = radiusKm / (111 * Math.cos(lat * Math.PI / 180));
 
   const query = `
-    SELECT id, title, description, location_name, lat, lon, price_per_hour, capacity, owner_id, created_at
+    SELECT id, title, description, location_name, lat, lon, price_per_hour, capacity, owner_id, image_urls, created_at
     FROM spaces
     WHERE lat BETWEEN $1 AND $2
       AND lon BETWEEN $3 AND $4

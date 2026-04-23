@@ -1,10 +1,16 @@
-import { useMemo, useState } from 'react';
-import { apiRequest } from '../services/api';
+import { useEffect, useMemo, useState } from 'react';
+import { MapContainer, Marker, Popup, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import PaymentModal from '../components/PaymentModal';
+import { apiRequest } from '../services/api';
 import { parseUtcDate, toLocalDateKey } from '../utils/dateTime';
 
 const WEEKDAY_LABELS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 const ONE_HOUR_MS = 60 * 60 * 1000;
+const DEFAULT_LOCATION_NAME = 'IIIT Hyderabad';
+const DEFAULT_LOCATION_LAT = 17.4477;
+const DEFAULT_LOCATION_LON = 78.3486;
+const DEFAULT_MAP_CENTER = [DEFAULT_LOCATION_LAT, DEFAULT_LOCATION_LON];
+const DEFAULT_MAP_ZOOM = 13;
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -134,18 +140,56 @@ function formatINR(value) {
   return `INR ${Number(value || 0).toFixed(2)}`;
 }
 
+function parseCoordinate(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function isValidLatLon(lat, lon) {
+  return Number.isFinite(lat) && Number.isFinite(lon);
+}
+
+function getSpaceImages(space) {
+  if (!Array.isArray(space?.image_urls)) return [];
+  return space.image_urls.map((item) => String(item || '').trim()).filter(Boolean);
+}
+
+function MapClickPicker({ onPick }) {
+  useMapEvents({
+    click(event) {
+      onPick(event.latlng.lat, event.latlng.lng);
+    }
+  });
+
+  return null;
+}
+
+function MapRecenter({ center }) {
+  const map = useMap();
+
+  useEffect(() => {
+    map.setView(center, map.getZoom(), { animate: true });
+  }, [center, map]);
+
+  return null;
+}
+
 function SearchPage({ token }) {
   const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local timezone';
+
   const [filters, setFilters] = useState({
-    location: '',
-    lat: '',
-    lon: '',
+    location: DEFAULT_LOCATION_NAME,
+    lat: String(DEFAULT_LOCATION_LAT),
+    lon: String(DEFAULT_LOCATION_LON),
     radius: '5',
     min_price: '',
     max_price: '',
     capacity: '1'
   });
+
   const [spaces, setSpaces] = useState([]);
+  const [selectedMapSpaceId, setSelectedMapSpaceId] = useState(null);
+
   const [notice, setNotice] = useState({ type: '', text: '' });
   const [searchBusy, setSearchBusy] = useState(false);
   const [geocodeBusy, setGeocodeBusy] = useState(false);
@@ -167,9 +211,101 @@ function SearchPage({ token }) {
     return `${spaces.length} space${spaces.length > 1 ? 's' : ''} available.`;
   }, [spaces]);
 
+  const mapSpaces = useMemo(() => (
+    spaces.filter((space) => isValidLatLon(Number(space.lat), Number(space.lon)))
+  ), [spaces]);
+
+  const selectedMapSpace = useMemo(() => {
+    return spaces.find((space) => Number(space.id) === Number(selectedMapSpaceId)) || null;
+  }, [spaces, selectedMapSpaceId]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadAllListingsForMap() {
+      try {
+        const allSpaces = await apiRequest('/listings/spaces', { token });
+        if (!active) return;
+
+        const list = Array.isArray(allSpaces) ? allSpaces : [];
+        setSpaces(list);
+        if (list.length > 0) {
+          setSelectedMapSpaceId(list[0].id);
+        }
+      } catch {
+        // Keep map usable even if the initial listing fetch fails.
+      }
+    }
+
+    loadAllListingsForMap();
+
+    return () => {
+      active = false;
+    };
+  }, [token]);
+
+  const mapCenter = useMemo(() => {
+    const filterLat = parseCoordinate(filters.lat);
+    const filterLon = parseCoordinate(filters.lon);
+    if (isValidLatLon(filterLat, filterLon)) return [filterLat, filterLon];
+
+    if (selectedMapSpace && isValidLatLon(Number(selectedMapSpace.lat), Number(selectedMapSpace.lon))) {
+      return [Number(selectedMapSpace.lat), Number(selectedMapSpace.lon)];
+    }
+
+    if (mapSpaces.length > 0) {
+      return [Number(mapSpaces[0].lat), Number(mapSpaces[0].lon)];
+    }
+
+    return DEFAULT_MAP_CENTER;
+  }, [filters.lat, filters.lon, selectedMapSpace, mapSpaces]);
+
+  useEffect(() => {
+    if (!spaces.length) {
+      setSelectedMapSpaceId(null);
+      return;
+    }
+
+    if (!selectedMapSpaceId || !spaces.some((space) => Number(space.id) === Number(selectedMapSpaceId))) {
+      setSelectedMapSpaceId(spaces[0].id);
+    }
+  }, [spaces, selectedMapSpaceId]);
+
   function updateFilters(event) {
     const { name, value } = event.target;
     setFilters((prev) => ({ ...prev, [name]: value }));
+  }
+
+  function applyQuickFilter(type) {
+    if (type === 'budget') {
+      setFilters((prev) => ({ ...prev, max_price: '500' }));
+      return;
+    }
+    if (type === 'team') {
+      setFilters((prev) => ({ ...prev, capacity: '6' }));
+      return;
+    }
+    if (type === 'premium') {
+      setFilters((prev) => ({ ...prev, min_price: '1000', capacity: '2' }));
+    }
+  }
+
+  function clearFilters() {
+    setFilters((prev) => ({
+      ...prev,
+      radius: '5',
+      min_price: '',
+      max_price: '',
+      capacity: '1'
+    }));
+  }
+
+  async function reverseGeocodeToLocation(lat, lon) {
+    const response = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&format=jsonv2`
+    );
+    const data = await response.json();
+    return data?.display_name || '';
   }
 
   async function geocodeLocation() {
@@ -200,12 +336,26 @@ function SearchPage({ token }) {
     }
   }
 
+  async function handleMapPick(lat, lon) {
+    setFilters((prev) => ({ ...prev, lat: String(lat), lon: String(lon) }));
+    setNotice({ type: 'info', text: 'Map location selected. You can search directly or resolve place name.' });
+
+    try {
+      const locationName = await reverseGeocodeToLocation(lat, lon);
+      if (locationName) {
+        setFilters((prev) => ({ ...prev, location: locationName }));
+      }
+    } catch {
+      // Ignore reverse geocode failures; coordinates are already set.
+    }
+  }
+
   async function handleSearch(event) {
     event.preventDefault();
     setNotice({ type: '', text: '' });
 
     if (!filters.lat || !filters.lon) {
-      setNotice({ type: 'info', text: 'Please enter a location and click "Get Coordinates" before searching.' });
+      setNotice({ type: 'info', text: 'Pick a location on the map or geocode a location name before searching.' });
       return;
     }
 
@@ -221,18 +371,20 @@ function SearchPage({ token }) {
       }).toString();
 
       const result = await apiRequest(`/search/spaces?${query}`);
-      setSpaces(result.spaces || []);
+      const loadedSpaces = result.spaces || [];
+      setSpaces(loadedSpaces);
       setExpandedId(null);
       setSlotsBySpace({});
       setSelectedDateBySpace({});
       setMonthCursorBySpace({});
       setSelectedSlotsBySpace({});
       setBookingDraftBySpace({});
+      setSelectedMapSpaceId(loadedSpaces[0]?.id || null);
 
-      if ((result.spaces || []).length === 0) {
+      if (loadedSpaces.length === 0) {
         setNotice({ type: 'info', text: 'No spaces matched your current filters.' });
       } else {
-        setNotice({ type: 'success', text: `Loaded ${result.spaces.length} spaces from ${result.source}.` });
+        setNotice({ type: 'success', text: `Loaded ${loadedSpaces.length} spaces from ${result.source}.` });
       }
     } catch (error) {
       setNotice({ type: 'error', text: `Search failed: ${error.message}` });
@@ -319,6 +471,11 @@ function SearchPage({ token }) {
     if (nextId && !slotsBySpace[spaceId]) {
       await loadSlots(spaceId);
     }
+  }
+
+  async function focusListingFromMap(spaceId) {
+    setSelectedMapSpaceId(spaceId);
+    await expandCard(spaceId);
   }
 
   function selectDate(spaceId, dateKey) {
@@ -478,298 +635,425 @@ function SearchPage({ token }) {
     setPaymentSession(null);
   }
 
+  const selectedMapImages = getSpaceImages(selectedMapSpace || {});
+
   return (
     <div className="stack fade">
       <div className="hero-strip">
         <h2>Search and Book</h2>
-        <p>Use geo filters, inspect slot availability, and create hourly bookings in one flow.</p>
+        <p>Explore listings on the map, pick a location directly, and complete booking from one screen.</p>
       </div>
 
-      <section className="card">
-        <h3 className="section-title">Search Filters</h3>
-        <p className="section-subtitle">Tip: use location lookup to auto-fill coordinates.</p>
+      <div className="search-explorer-layout">
+        <section className="search-results-panel">
+          <section className="card">
+            <h3 className="section-title">Search Filters</h3>
+            <p className="section-subtitle">Click anywhere on the map to set coordinates instantly.</p>
 
-        <form className="stack" onSubmit={handleSearch}>
-          <div className="grid-2">
-            <div className="field">
-              <label htmlFor="location">Location</label>
-              <input
-                id="location"
-                name="location"
-                placeholder="e.g. Hyderabad, Banjara Hills"
-                value={filters.location}
-                onChange={updateFilters}
-              />
-            </div>
-            <div className="btn-row" style={{ alignItems: 'end' }}>
-              <button className="btn btn-muted" type="button" onClick={geocodeLocation} disabled={geocodeBusy}>
-                {geocodeBusy ? 'Looking up...' : 'Get Coordinates'}
-              </button>
-            </div>
-          </div>
-
-          {/* Hidden lat/lon fields – populated automatically by geocoding */}
-          <input type="hidden" id="lat" name="lat" value={filters.lat} />
-          <input type="hidden" id="lon" name="lon" value={filters.lon} />
-
-          <div className="grid-3">
-            <div className="field">
-              <label htmlFor="radius">Radius (km)</label>
-              <input id="radius" name="radius" type="number" min="1" value={filters.radius} onChange={updateFilters} />
-            </div>
-            <div className="field">
-              <label htmlFor="min_price">Min Price</label>
-              <input id="min_price" name="min_price" type="number" min="0" value={filters.min_price} onChange={updateFilters} />
-            </div>
-            <div className="field">
-              <label htmlFor="max_price">Max Price</label>
-              <input id="max_price" name="max_price" type="number" min="0" value={filters.max_price} onChange={updateFilters} />
-            </div>
-            <div className="field">
-              <label htmlFor="capacity">Capacity</label>
-              <input id="capacity" name="capacity" type="number" min="1" value={filters.capacity} onChange={updateFilters} />
-            </div>
-          </div>
-
-          <div className="btn-row">
-            <button className="btn btn-primary" type="submit" disabled={searchBusy}>
-              {searchBusy ? 'Searching...' : 'Search Spaces'}
-            </button>
-            <span className="tiny" style={{ alignSelf: 'center' }}>{resultSummary}</span>
-          </div>
-        </form>
-      </section>
-
-      {notice.text ? <div className={`notice ${notice.type || 'info'}`}>{notice.text}</div> : null}
-
-      {spaces.map((space) => {
-        const query = getSlotQuery(space.id);
-        const slotPayload = slotsBySpace[space.id];
-        const availableSlots = slotPayload?.slots || [];
-        const bookingDraft = bookingDraftBySpace[space.id] || { guest_count: 1 };
-
-        const groupedSlots = groupSlotsByDate(availableSlots);
-        const dateKeys = Object.keys(groupedSlots).sort();
-        const selectedDate = dateKeys.includes(selectedDateBySpace[space.id])
-          ? selectedDateBySpace[space.id]
-          : (dateKeys[0] || query.from);
-        const daySlots = groupedSlots[selectedDate] || [];
-
-        const selectedSlots = sortUtcAscending(
-          (selectedSlotsBySpace[space.id] || []).filter((utc) => daySlots.some((slot) => slot.slot_start_utc === utc))
-        );
-        const selectedSlotSet = new Set(selectedSlots);
-
-        const rangeStartMonth = monthKeyFromDateKey(query.from);
-        const rangeEndMonth = monthKeyFromDateKey(query.to);
-
-        let monthCursor = monthCursorBySpace[space.id] || monthKeyFromDateKey(selectedDate);
-        if (monthCursor < rangeStartMonth) monthCursor = rangeStartMonth;
-        if (monthCursor > rangeEndMonth) monthCursor = rangeEndMonth;
-
-        const calendarCells = buildCalendarCells(monthCursor);
-        const canMovePrevMonth = monthCursor > rangeStartMonth;
-        const canMoveNextMonth = monthCursor < rangeEndMonth;
-
-        const slotCount = selectedSlots.length;
-        const pricePerHour = Number(space.price_per_hour || 0);
-        const subtotal = pricePerHour * slotCount;
-        const estimatedTotal = subtotal;
-
-        const timezone = slotPayload?.timezone || 'UTC';
-
-        return (
-          <article className="card fade" key={space.id}>
-            <div className="card-title-row">
-              <div className="stack" style={{ gap: '0.45rem' }}>
-                <h3>{space.title}</h3>
-                <p className="tiny">{space.description || 'No description provided.'}</p>
-                <div className="meta-row">
-                  <span>{space.location_name || `${space.lat}, ${space.lon}`}</span>
-                  <span>INR {space.price_per_hour}/hour</span>
-                  <span>Capacity {space.capacity}</span>
+            <form className="stack" onSubmit={handleSearch}>
+              <div className="grid-2">
+                <div className="field">
+                  <label htmlFor="location">Location</label>
+                  <input
+                    id="location"
+                    name="location"
+                    placeholder="e.g. Hyderabad, Banjara Hills"
+                    value={filters.location}
+                    onChange={updateFilters}
+                  />
+                </div>
+                <div className="btn-row" style={{ alignItems: 'end' }}>
+                  <button className="btn btn-muted" type="button" onClick={geocodeLocation} disabled={geocodeBusy}>
+                    {geocodeBusy ? 'Looking up...' : 'Resolve Location'}
+                  </button>
                 </div>
               </div>
-              <button className="btn btn-muted" onClick={() => expandCard(space.id)}>
-                {expandedId === space.id ? 'Hide Booking Panel' : 'View Slots'}
-              </button>
-            </div>
 
-            {expandedId === space.id ? (
-              <div className="stack" style={{ marginTop: '0.8rem' }}>
-                <div className="booking-toolbar">
-                  <div className="field">
-                    <label>From</label>
-                    <input
-                      type="date"
-                      value={query.from}
-                      onChange={(event) => updateSlotQuery(space.id, 'from', event.target.value)}
-                    />
-                  </div>
-                  <div className="field">
-                    <label>To</label>
-                    <input
-                      type="date"
-                      value={query.to}
-                      onChange={(event) => updateSlotQuery(space.id, 'to', event.target.value)}
-                    />
-                  </div>
-                  <div className="btn-row" style={{ alignItems: 'end' }}>
-                    <button
-                      className="btn btn-muted"
-                      type="button"
-                      onClick={() => loadSlots(space.id)}
-                      disabled={slotsLoadingBySpace[space.id]}
-                    >
-                      {slotsLoadingBySpace[space.id] ? 'Loading...' : 'Refresh Slots'}
-                    </button>
-                  </div>
+              <div className="grid-2">
+                <div className="field">
+                  <label htmlFor="lat">Latitude</label>
+                  <input id="lat" name="lat" value={filters.lat} onChange={updateFilters} placeholder="Click map or resolve location" />
                 </div>
+                <div className="field">
+                  <label htmlFor="lon">Longitude</label>
+                  <input id="lon" name="lon" value={filters.lon} onChange={updateFilters} placeholder="Click map or resolve location" />
+                </div>
+              </div>
 
-                {slotPayload ? (
-                  <>
-                    <div className="tiny">
-                      {availableSlots.length} available slot{availableSlots.length === 1 ? '' : 's'} shown in your local time ({userTimezone}).
-                    </div>
+              <div className="grid-3">
+                <div className="field">
+                  <label htmlFor="radius">Radius (km): {filters.radius}</label>
+                  <input id="radius" name="radius" type="range" min="1" max="25" value={filters.radius} onChange={updateFilters} />
+                </div>
+                <div className="field">
+                  <label htmlFor="min_price">Min Price</label>
+                  <input id="min_price" name="min_price" type="number" min="0" value={filters.min_price} onChange={updateFilters} />
+                </div>
+                <div className="field">
+                  <label htmlFor="max_price">Max Price</label>
+                  <input id="max_price" name="max_price" type="number" min="0" value={filters.max_price} onChange={updateFilters} />
+                </div>
+                <div className="field">
+                  <label htmlFor="capacity">Minimum Capacity</label>
+                  <input id="capacity" name="capacity" type="number" min="1" value={filters.capacity} onChange={updateFilters} />
+                </div>
+              </div>
 
-                    {availableSlots.length > 0 ? (
-                      <div className="booking-picker">
-                        <section className="booking-calendar-card">
-                          <div className="booking-picker-title">Select a Date &amp; Time</div>
-                          <div className="calendar-nav">
-                            <button
-                              type="button"
-                              className="calendar-nav-btn"
-                              onClick={() => updateMonthCursor(space.id, shiftMonthKey(monthCursor, -1))}
-                              disabled={!canMovePrevMonth}
-                            >
-                              &lt;
-                            </button>
-                            <strong>{monthLabel(monthCursor)}</strong>
-                            <button
-                              type="button"
-                              className="calendar-nav-btn"
-                              onClick={() => updateMonthCursor(space.id, shiftMonthKey(monthCursor, 1))}
-                              disabled={!canMoveNextMonth}
-                            >
-                              &gt;
-                            </button>
-                          </div>
+              <div className="btn-row search-quick-filters">
+                <button className="btn btn-muted" type="button" onClick={() => applyQuickFilter('budget')}>Budget</button>
+                <button className="btn btn-muted" type="button" onClick={() => applyQuickFilter('team')}>Team Friendly</button>
+                <button className="btn btn-muted" type="button" onClick={() => applyQuickFilter('premium')}>Premium</button>
+                <button className="btn btn-muted" type="button" onClick={clearFilters}>Reset Filters</button>
+              </div>
 
-                          <div className="calendar-weekdays">
-                            {WEEKDAY_LABELS.map((weekday) => (
-                              <span key={weekday}>{weekday}</span>
-                            ))}
-                          </div>
+              <div className="btn-row">
+                <button className="btn btn-primary" type="submit" disabled={searchBusy}>
+                  {searchBusy ? 'Searching...' : 'Search Spaces'}
+                </button>
+                <span className="tiny" style={{ alignSelf: 'center' }}>{resultSummary}</span>
+              </div>
+            </form>
+          </section>
 
-                          <div className="calendar-grid">
-                            {calendarCells.map((dateKey, cellIndex) => {
-                              if (!dateKey) {
-                                return <span key={`empty-${cellIndex}`} className="calendar-day empty" />;
-                              }
+          {notice.text ? <div className={`notice ${notice.type || 'info'}`}>{notice.text}</div> : null}
 
-                              const hasSlots = Boolean(groupedSlots[dateKey]?.length);
-                              const isSelected = selectedDate === dateKey;
+          {spaces.map((space) => {
+            const query = getSlotQuery(space.id);
+            const slotPayload = slotsBySpace[space.id];
+            const availableSlots = slotPayload?.slots || [];
+            const bookingDraft = bookingDraftBySpace[space.id] || { guest_count: 1 };
+            const images = getSpaceImages(space);
+            const coverImage = images[0] || '';
 
-                              return (
-                                <button
-                                  key={dateKey}
-                                  type="button"
-                                  className={`calendar-day ${hasSlots ? 'available' : 'disabled'} ${isSelected ? 'selected' : ''}`}
-                                  onClick={() => selectDate(space.id, dateKey)}
-                                  disabled={!hasSlots}
-                                >
-                                  {Number(dateKey.slice(8, 10))}
-                                </button>
-                              );
-                            })}
-                          </div>
+            const groupedSlots = groupSlotsByDate(availableSlots);
+            const dateKeys = Object.keys(groupedSlots).sort();
+            const selectedDate = dateKeys.includes(selectedDateBySpace[space.id])
+              ? selectedDateBySpace[space.id]
+              : (dateKeys[0] || query.from);
+            const daySlots = groupedSlots[selectedDate] || [];
 
-                          <div className="tiny">Listing timezone: {timezone} • Display timezone: {userTimezone}</div>
-                        </section>
+            const selectedSlots = sortUtcAscending(
+              (selectedSlotsBySpace[space.id] || []).filter((utc) => daySlots.some((slot) => slot.slot_start_utc === utc))
+            );
+            const selectedSlotSet = new Set(selectedSlots);
 
-                        <section className="booking-times-card">
-                          <div className="booking-times-header">
-                            <h4>{selectedDate ? formatDateKey(selectedDate) : 'No date selected'}</h4>
-                            <p className="tiny">Click one time, then another to set a multi-hour range.</p>
-                          </div>
+            const rangeStartMonth = monthKeyFromDateKey(query.from);
+            const rangeEndMonth = monthKeyFromDateKey(query.to);
 
-                          {daySlots.length > 0 ? (
-                            <div className="time-slot-list">
-                              {daySlots.map((slot) => (
-                                <button
-                                  key={slot.slot_start_utc}
-                                  type="button"
-                                  className={`time-slot-btn ${selectedSlotSet.has(slot.slot_start_utc) ? 'active' : ''}`}
-                                  onClick={() => selectSlotRange(space.id, daySlots, slot.slot_start_utc)}
-                                >
-                                  <span>{formatTimeInTimezone(slot.slot_start_utc)}</span>
-                                  <small>to {formatTimeInTimezone(slot.slot_end_utc)}</small>
-                                </button>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="notice info">No slots available for this date.</div>
-                          )}
-                        </section>
-                      </div>
-                    ) : (
-                      <div className="notice info">No slots are currently available in this date range.</div>
-                    )}
-                  </>
+            let monthCursor = monthCursorBySpace[space.id] || monthKeyFromDateKey(selectedDate);
+            if (monthCursor < rangeStartMonth) monthCursor = rangeStartMonth;
+            if (monthCursor > rangeEndMonth) monthCursor = rangeEndMonth;
+
+            const calendarCells = buildCalendarCells(monthCursor);
+            const canMovePrevMonth = monthCursor > rangeStartMonth;
+            const canMoveNextMonth = monthCursor < rangeEndMonth;
+
+            const slotCount = selectedSlots.length;
+            const pricePerHour = Number(space.price_per_hour || 0);
+            const subtotal = pricePerHour * slotCount;
+            const estimatedTotal = subtotal;
+
+            const timezone = slotPayload?.timezone || 'UTC';
+
+            return (
+              <article
+                className={`card fade listing-result-card ${Number(selectedMapSpaceId) === Number(space.id) ? 'active' : ''}`}
+                key={space.id}
+                onClick={() => setSelectedMapSpaceId(space.id)}
+              >
+                {coverImage ? (
+                  <div className="listing-cover-wrap">
+                    <img src={coverImage} alt={space.title} className="listing-cover" />
+                  </div>
                 ) : (
-                  <div className="notice info">Load slots to choose a booking start time.</div>
+                  <div className="listing-cover-empty">No images uploaded</div>
                 )}
 
-                <div className="booking-summary">
-                  <div className="booking-summary-card">
-                    <div className="tiny">Selected Slots</div>
-                    <div className="booking-summary-value">
-                      {slotCount} hour{slotCount === 1 ? '' : 's'}
+                <div className="card-title-row">
+                  <div className="stack" style={{ gap: '0.45rem' }}>
+                    <h3>{space.title}</h3>
+                    <p className="tiny">{space.description || 'No description provided.'}</p>
+                    <div className="meta-row">
+                      <span>{space.location_name || `${space.lat}, ${space.lon}`}</span>
+                      <span>INR {space.price_per_hour}/hour</span>
+                      <span>Capacity {space.capacity}</span>
                     </div>
-                    <div className="tiny">{formatINR(pricePerHour)} per hour</div>
-                    <div className="booking-summary-total">Estimated: {formatINR(estimatedTotal)}</div>
                   </div>
-
-                  <div className="field">
-                    <label>Guest Count</label>
-                    <input
-                      type="number"
-                      min="1"
-                      value={bookingDraft.guest_count}
-                      onChange={(event) => updateBookingDraft(space.id, 'guest_count', event.target.value)}
-                    />
-                  </div>
-
-                  <div className="btn-row booking-actions" style={{ alignItems: 'end' }}>
-                    <button
-                      className="btn btn-muted"
-                      type="button"
-                      onClick={() => setSelectedSlotsBySpace((prev) => ({ ...prev, [space.id]: [] }))}
-                      disabled={slotCount === 0}
-                    >
-                      Clear Selection
-                    </button>
-                    <button
-                      className="btn btn-primary"
-                      type="button"
-                      onClick={() => createBooking(space.id)}
-                      disabled={bookingBusyBySpace[space.id] || slotCount === 0}
-                    >
-                      {bookingBusyBySpace[space.id] ? (
-                        <span className="btn-with-spinner">
-                          <span className="btn-spinner" aria-hidden="true" />
-                          Booking in progress...
-                        </span>
-                      ) : `Book ${slotCount} Slot${slotCount === 1 ? '' : 's'}`}
+                  <div className="btn-row">
+                    <button className="btn btn-muted" onClick={() => focusListingFromMap(space.id)}>View on Map</button>
+                    <button className="btn btn-muted" onClick={() => expandCard(space.id)}>
+                      {expandedId === space.id ? 'Hide Booking Panel' : 'View Slots'}
                     </button>
                   </div>
                 </div>
+
+                {expandedId === space.id ? (
+                  <div className="stack" style={{ marginTop: '0.8rem' }}>
+                    <div className="booking-toolbar">
+                      <div className="field">
+                        <label>From</label>
+                        <input
+                          type="date"
+                          value={query.from}
+                          onChange={(event) => updateSlotQuery(space.id, 'from', event.target.value)}
+                        />
+                      </div>
+                      <div className="field">
+                        <label>To</label>
+                        <input
+                          type="date"
+                          value={query.to}
+                          onChange={(event) => updateSlotQuery(space.id, 'to', event.target.value)}
+                        />
+                      </div>
+                      <div className="btn-row" style={{ alignItems: 'end' }}>
+                        <button
+                          className="btn btn-muted"
+                          type="button"
+                          onClick={() => loadSlots(space.id)}
+                          disabled={slotsLoadingBySpace[space.id]}
+                        >
+                          {slotsLoadingBySpace[space.id] ? 'Loading...' : 'Refresh Slots'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {slotPayload ? (
+                      <>
+                        <div className="tiny">
+                          {availableSlots.length} available slot{availableSlots.length === 1 ? '' : 's'} shown in your local time ({userTimezone}).
+                        </div>
+
+                        {availableSlots.length > 0 ? (
+                          <div className="booking-picker">
+                            <section className="booking-calendar-card">
+                              <div className="booking-picker-title">Select a Date and Time</div>
+                              <div className="calendar-nav">
+                                <button
+                                  type="button"
+                                  className="calendar-nav-btn"
+                                  onClick={() => updateMonthCursor(space.id, shiftMonthKey(monthCursor, -1))}
+                                  disabled={!canMovePrevMonth}
+                                >
+                                  &lt;
+                                </button>
+                                <strong>{monthLabel(monthCursor)}</strong>
+                                <button
+                                  type="button"
+                                  className="calendar-nav-btn"
+                                  onClick={() => updateMonthCursor(space.id, shiftMonthKey(monthCursor, 1))}
+                                  disabled={!canMoveNextMonth}
+                                >
+                                  &gt;
+                                </button>
+                              </div>
+
+                              <div className="calendar-weekdays">
+                                {WEEKDAY_LABELS.map((weekday) => (
+                                  <span key={weekday}>{weekday}</span>
+                                ))}
+                              </div>
+
+                              <div className="calendar-grid">
+                                {calendarCells.map((dateKey, cellIndex) => {
+                                  if (!dateKey) {
+                                    return <span key={`empty-${cellIndex}`} className="calendar-day empty" />;
+                                  }
+
+                                  const hasSlots = Boolean(groupedSlots[dateKey]?.length);
+                                  const isSelected = selectedDate === dateKey;
+
+                                  return (
+                                    <button
+                                      key={dateKey}
+                                      type="button"
+                                      className={`calendar-day ${hasSlots ? 'available' : 'disabled'} ${isSelected ? 'selected' : ''}`}
+                                      onClick={() => selectDate(space.id, dateKey)}
+                                      disabled={!hasSlots}
+                                    >
+                                      {Number(dateKey.slice(8, 10))}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+
+                              <div className="tiny">Listing timezone: {timezone} | Display timezone: {userTimezone}</div>
+                            </section>
+
+                            <section className="booking-times-card">
+                              <div className="booking-times-header">
+                                <h4>{selectedDate ? formatDateKey(selectedDate) : 'No date selected'}</h4>
+                                <p className="tiny">Click one time, then another to set a multi-hour range.</p>
+                              </div>
+
+                              {daySlots.length > 0 ? (
+                                <div className="time-slot-list">
+                                  {daySlots.map((slot) => (
+                                    <button
+                                      key={slot.slot_start_utc}
+                                      type="button"
+                                      className={`time-slot-btn ${selectedSlotSet.has(slot.slot_start_utc) ? 'active' : ''}`}
+                                      onClick={() => selectSlotRange(space.id, daySlots, slot.slot_start_utc)}
+                                    >
+                                      <span>{formatTimeInTimezone(slot.slot_start_utc)}</span>
+                                      <small>to {formatTimeInTimezone(slot.slot_end_utc)}</small>
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="notice info">No slots available for this date.</div>
+                              )}
+                            </section>
+                          </div>
+                        ) : (
+                          <div className="notice info">No slots are currently available in this date range.</div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="notice info">Load slots to choose a booking start time.</div>
+                    )}
+
+                    <div className="booking-summary">
+                      <div className="booking-summary-card">
+                        <div className="tiny">Selected Slots</div>
+                        <div className="booking-summary-value">
+                          {slotCount} hour{slotCount === 1 ? '' : 's'}
+                        </div>
+                        <div className="tiny">{formatINR(pricePerHour)} per hour</div>
+                        <div className="booking-summary-total">Estimated: {formatINR(estimatedTotal)}</div>
+                      </div>
+
+                      <div className="field">
+                        <label>Guest Count</label>
+                        <input
+                          type="number"
+                          min="1"
+                          value={bookingDraft.guest_count}
+                          onChange={(event) => updateBookingDraft(space.id, 'guest_count', event.target.value)}
+                        />
+                      </div>
+
+                      <div className="btn-row booking-actions" style={{ alignItems: 'end' }}>
+                        <button
+                          className="btn btn-muted"
+                          type="button"
+                          onClick={() => setSelectedSlotsBySpace((prev) => ({ ...prev, [space.id]: [] }))}
+                          disabled={slotCount === 0}
+                        >
+                          Clear Selection
+                        </button>
+                        <button
+                          className="btn btn-primary"
+                          type="button"
+                          onClick={() => createBooking(space.id)}
+                          disabled={bookingBusyBySpace[space.id] || slotCount === 0}
+                        >
+                          {bookingBusyBySpace[space.id] ? (
+                            <span className="btn-with-spinner">
+                              <span className="btn-spinner" aria-hidden="true" />
+                              Booking in progress...
+                            </span>
+                          ) : `Book ${slotCount} Slot${slotCount === 1 ? '' : 's'}`}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+              </article>
+            );
+          })}
+        </section>
+
+        <aside className="search-map-panel">
+          <section className="card map-shell">
+            <div className="card-title-row" style={{ marginBottom: '0.55rem' }}>
+              <h3>Map Explorer</h3>
+              <span className="tiny">Click map to pick location</span>
+            </div>
+
+            <MapContainer center={mapCenter} zoom={DEFAULT_MAP_ZOOM} className="search-map-canvas" scrollWheelZoom>
+              <TileLayer
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              />
+
+              <MapRecenter center={mapCenter} />
+              <MapClickPicker onPick={handleMapPick} />
+
+              {isValidLatLon(parseCoordinate(filters.lat), parseCoordinate(filters.lon)) ? (
+                <Marker position={[Number(filters.lat), Number(filters.lon)]}>
+                  <Popup>
+                    <strong>Search Center</strong>
+                    <div>{filters.location || `${Number(filters.lat).toFixed(4)}, ${Number(filters.lon).toFixed(4)}`}</div>
+                  </Popup>
+                </Marker>
+              ) : null}
+
+              {mapSpaces.map((space) => {
+                const images = getSpaceImages(space);
+                return (
+                  <Marker
+                    key={`marker-${space.id}`}
+                    position={[Number(space.lat), Number(space.lon)]}
+                    eventHandlers={{
+                      click: () => setSelectedMapSpaceId(space.id)
+                    }}
+                  >
+                    <Popup>
+                      <div className="map-popup-card">
+                        {images[0] ? <img src={images[0]} alt={space.title} className="map-popup-image" /> : null}
+                        <strong>{space.title}</strong>
+                        <div>{space.location_name || `${space.lat}, ${space.lon}`}</div>
+                        <div>{formatINR(space.price_per_hour)} per hour</div>
+                      </div>
+                    </Popup>
+                  </Marker>
+                );
+              })}
+            </MapContainer>
+          </section>
+
+          {selectedMapSpace ? (
+            <section className="card map-selected-card">
+              <div className="card-title-row">
+                <div>
+                  <h3>{selectedMapSpace.title}</h3>
+                  <p className="tiny">Listing #{selectedMapSpace.id}</p>
+                </div>
+                <button className="btn btn-muted" onClick={() => focusListingFromMap(selectedMapSpace.id)}>
+                  Open Booking Panel
+                </button>
               </div>
-            ) : null}
-          </article>
-        );
-      })}
+
+              {selectedMapImages.length > 0 ? (
+                <>
+                  <img src={selectedMapImages[0]} alt={selectedMapSpace.title} className="map-selected-hero" />
+                  {selectedMapImages.length > 1 ? (
+                    <div className="map-selected-thumbs">
+                      {selectedMapImages.slice(1, 5).map((url, index) => (
+                        <img key={`selected-thumb-${index}`} src={url} alt={`${selectedMapSpace.title} ${index + 2}`} />
+                      ))}
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <div className="listing-cover-empty">No images uploaded for this listing.</div>
+              )}
+
+              <div className="booking-key-list">
+                <div className="booking-key-row"><span>Location</span><strong>{selectedMapSpace.location_name || '-'}</strong></div>
+                <div className="booking-key-row"><span>Price</span><strong>{formatINR(selectedMapSpace.price_per_hour)} / hour</strong></div>
+                <div className="booking-key-row"><span>Capacity</span><strong>{selectedMapSpace.capacity}</strong></div>
+                <div className="booking-key-row"><span>Coordinates</span><strong>{Number(selectedMapSpace.lat).toFixed(4)}, {Number(selectedMapSpace.lon).toFixed(4)}</strong></div>
+              </div>
+            </section>
+          ) : (
+            <section className="card">
+              <div className="notice info">Search listings to view detailed information on the map.</div>
+            </section>
+          )}
+        </aside>
+      </div>
 
       {paymentSession ? (
         <PaymentModal

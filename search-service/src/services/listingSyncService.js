@@ -1,12 +1,23 @@
 const db = require('../models/db');
 const redis = require('../models/redis');
 
+function normalizeImageUrls(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item || '').trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
 async function upsertSpace(space) {
   if (!space || !space.id) return;
 
+  const imageUrls = normalizeImageUrls(space.image_urls);
+
   await db.query(
-    `INSERT INTO spaces (id, title, description, location_name, lat, lon, price_per_hour, capacity, owner_id, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    `INSERT INTO spaces (id, title, description, location_name, lat, lon, price_per_hour, capacity, owner_id, image_urls, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)
      ON CONFLICT (id)
      DO UPDATE SET
       title = EXCLUDED.title,
@@ -17,6 +28,7 @@ async function upsertSpace(space) {
       price_per_hour = EXCLUDED.price_per_hour,
       capacity = EXCLUDED.capacity,
       owner_id = EXCLUDED.owner_id,
+      image_urls = EXCLUDED.image_urls,
       created_at = EXCLUDED.created_at`,
     [
       space.id,
@@ -28,6 +40,7 @@ async function upsertSpace(space) {
       space.price_per_hour,
       space.capacity,
       space.owner_id || null,
+      JSON.stringify(imageUrls),
       space.created_at || new Date().toISOString()
     ]
   );

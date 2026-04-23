@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react';
+import { MapContainer, Marker, Popup, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import { ApiError, apiRequest } from '../services/api';
 import SubscriptionModal from '../components/SubscriptionModal';
 import UpgradeModal from '../components/UpgradeModal';
+
+const MAX_IMAGES = 8;
+const DEFAULT_ADD_MAP_CENTER = [17.4477, 78.3486];
+const DEFAULT_ADD_MAP_ZOOM = 13;
+const UPLOAD_IMAGE_MAX_DIMENSION = 1280;
 
 function getInitialForm() {
     return {
@@ -42,6 +48,97 @@ function formatPlan(plan) {
     return `${plan.charAt(0).toUpperCase()}${plan.slice(1)}`;
 }
 
+function normalizeImageList(values) {
+    const seen = new Set();
+    const cleaned = [];
+
+    for (const raw of values || []) {
+        const url = String(raw || '').trim();
+        if (!url) continue;
+
+        const isHttp = /^https?:\/\//i.test(url);
+        const isDataImage = /^data:image\/[a-z0-9.+-]+;base64,/i.test(url);
+        if (!isHttp && !isDataImage) continue;
+        if (seen.has(url)) continue;
+
+        seen.add(url);
+        cleaned.push(url);
+        if (cleaned.length >= MAX_IMAGES) break;
+    }
+
+    return cleaned;
+}
+
+function parseCoordinate(value) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isValidLatLon(lat, lon) {
+    return Number.isFinite(lat) && Number.isFinite(lon);
+}
+
+function MapClickPicker({ onPick }) {
+    useMapEvents({
+        click(event) {
+            onPick(event.latlng.lat, event.latlng.lng);
+        }
+    });
+
+    return null;
+}
+
+function MapRecenter({ center }) {
+    const map = useMap();
+
+    useEffect(() => {
+        map.setView(center, map.getZoom(), { animate: true });
+    }, [center, map]);
+
+    return null;
+}
+
+function resizeImageFileToDataUrl(file) {
+    return new Promise((resolve, reject) => {
+        const objectUrl = URL.createObjectURL(file);
+        const image = new Image();
+
+        image.onload = () => {
+            try {
+                const width = image.width;
+                const height = image.height;
+                const scale = Math.min(1, UPLOAD_IMAGE_MAX_DIMENSION / Math.max(width, height));
+                const targetWidth = Math.max(1, Math.round(width * scale));
+                const targetHeight = Math.max(1, Math.round(height * scale));
+
+                const canvas = document.createElement('canvas');
+                canvas.width = targetWidth;
+                canvas.height = targetHeight;
+
+                const context = canvas.getContext('2d');
+                if (!context) {
+                    throw new Error('Image processing failed');
+                }
+
+                context.drawImage(image, 0, 0, targetWidth, targetHeight);
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.84);
+                URL.revokeObjectURL(objectUrl);
+                resolve(dataUrl);
+            } catch (error) {
+                URL.revokeObjectURL(objectUrl);
+                reject(new Error(`Failed to process file ${file.name}: ${error.message}`));
+            }
+        };
+
+        image.onerror = () => {
+            URL.revokeObjectURL(objectUrl);
+            reject(new Error(`Failed to read file ${file.name}`));
+        };
+
+        image.src = objectUrl;
+    });
+}
+
 function AddSpacePage({ token, user }) {
     const [form, setForm] = useState(getInitialForm);
     const [geocodeBusy, setGeocodeBusy] = useState(false);
@@ -51,6 +148,10 @@ function AddSpacePage({ token, user }) {
     const [showSubscriptionModal, setShowSubscriptionModal] = useState(false);
     const [showUpgradeModal, setShowUpgradeModal] = useState(false);
     const [notice, setNotice] = useState({ type: '', text: '' });
+    const [imageUrlInput, setImageUrlInput] = useState('');
+    const [imageUrls, setImageUrls] = useState([]);
+    const [uploadBusy, setUploadBusy] = useState(false);
+    const [mapAnchor, setMapAnchor] = useState(DEFAULT_ADD_MAP_CENTER);
 
     const actualUserId = user?.userId || getUserIdFromToken(token);
 
@@ -109,11 +210,16 @@ function AddSpacePage({ token, user }) {
             if (!Array.isArray(data) || data.length === 0) {
                 setNotice({ type: 'info', text: 'No matching location found. Please try a different location name.' });
             } else {
+                const lat = Number(data[0].lat);
+                const lon = Number(data[0].lon);
                 setForm((prev) => ({
                     ...prev,
-                    lat: data[0].lat,
-                    lon: data[0].lon
+                    lat: String(lat),
+                    lon: String(lon)
                 }));
+                if (isValidLatLon(lat, lon)) {
+                    setMapAnchor([lat, lon]);
+                }
                 setNotice({ type: 'success', text: `Coordinates loaded for ${data[0].display_name}.` });
             }
         } catch (error) {
@@ -129,6 +235,87 @@ function AddSpacePage({ token, user }) {
         setShowSubscriptionModal(false);
         setShowUpgradeModal(false);
         setNotice({ type: 'success', text: `${formatPlan(normalizedPlan)} plan activated. You can now create listings.` });
+    }
+
+    function addImageUrlsFromInput() {
+        const fromInput = imageUrlInput
+            .split('\n')
+            .map((item) => item.trim())
+            .filter(Boolean);
+
+        if (fromInput.length === 0) {
+            setNotice({ type: 'info', text: 'Paste one or more image URLs first.' });
+            return;
+        }
+
+        const merged = normalizeImageList([...imageUrls, ...fromInput]);
+        setImageUrls(merged);
+        setImageUrlInput('');
+        setNotice({ type: 'success', text: `Added ${Math.max(merged.length - imageUrls.length, 0)} image(s).` });
+    }
+
+    async function handleImageUpload(event) {
+        const files = Array.from(event.target.files || []);
+        if (files.length === 0) return;
+
+        const availableSlots = Math.max(0, MAX_IMAGES - imageUrls.length);
+        if (availableSlots === 0) {
+            setNotice({ type: 'info', text: `You can add up to ${MAX_IMAGES} images per listing.` });
+            event.target.value = '';
+            return;
+        }
+
+        setUploadBusy(true);
+        try {
+            const selectedFiles = files.slice(0, availableSlots);
+            const dataUrls = await Promise.all(selectedFiles.map((file) => resizeImageFileToDataUrl(file)));
+            const merged = normalizeImageList([...imageUrls, ...dataUrls]);
+            setImageUrls(merged);
+            const uploadedCount = Math.max(merged.length - imageUrls.length, 0);
+            const ignoredCount = files.length - selectedFiles.length;
+            setNotice({
+                type: 'success',
+                text: ignoredCount > 0
+                    ? `Uploaded ${uploadedCount} image(s). Ignored ${ignoredCount} extra file(s) due to image limit.`
+                    : `Uploaded ${uploadedCount} image(s).`
+            });
+        } catch (error) {
+            setNotice({ type: 'error', text: `Image upload failed: ${error.message}` });
+        } finally {
+            setUploadBusy(false);
+            event.target.value = '';
+        }
+    }
+
+    async function reverseGeocodeLocationName(lat, lon) {
+        const response = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&format=jsonv2`
+        );
+        const data = await response.json();
+        return data?.display_name || '';
+    }
+
+    async function handleMapPick(lat, lon) {
+        setForm((prev) => ({
+            ...prev,
+            lat: lat.toFixed(6),
+            lon: lon.toFixed(6)
+        }));
+        setMapAnchor([lat, lon]);
+        setNotice({ type: 'info', text: 'Coordinates updated from map click.' });
+
+        try {
+            const locationName = await reverseGeocodeLocationName(lat, lon);
+            if (locationName) {
+                setForm((prev) => ({ ...prev, location_name: locationName }));
+            }
+        } catch {
+            // Keep map picking usable even if reverse geocoding is unavailable.
+        }
+    }
+
+    function removeImageAt(index) {
+        setImageUrls((prev) => prev.filter((_, i) => i !== index));
     }
 
     async function handleSubmit(event) {
@@ -155,12 +342,15 @@ function AddSpacePage({ token, user }) {
                     lon: Number(form.lon),
                     price_per_hour: Number(form.price_per_hour),
                     capacity: Number(form.capacity),
-                    timezone: form.timezone || 'UTC'
+                    timezone: form.timezone || 'UTC',
+                    image_urls: imageUrls
                 }
             });
 
             setNotice({ type: 'success', text: 'Listing created successfully.' });
             setForm(getInitialForm());
+            setImageUrls([]);
+            setImageUrlInput('');
         } catch (error) {
             const code = error instanceof ApiError ? error.payload?.code : null;
 
@@ -179,7 +369,11 @@ function AddSpacePage({ token, user }) {
         }
     }
 
-    const isBusy = geocodeBusy || submitBusy || subscriptionBusy;
+    const isBusy = geocodeBusy || submitBusy || subscriptionBusy || uploadBusy;
+    const selectedLat = parseCoordinate(form.lat);
+    const selectedLon = parseCoordinate(form.lon);
+    const selectedPosition = isValidLatLon(selectedLat, selectedLon) ? [selectedLat, selectedLon] : null;
+    const mapCenter = selectedPosition || mapAnchor;
 
     return (
         <div className="stack fade">
@@ -227,6 +421,53 @@ function AddSpacePage({ token, user }) {
                         <textarea id="description" name="description" value={form.description} onChange={updateForm} />
                     </div>
 
+                    <section className="stack" style={{ gap: '0.6rem' }}>
+                        <div className="card-title-row">
+                            <h4>Listing Images</h4>
+                            <span className="tiny">{imageUrls.length}/{MAX_IMAGES} added</span>
+                        </div>
+
+                        <div className="field">
+                            <label htmlFor="image_urls_input">Image URLs (one per line)</label>
+                            <textarea
+                                id="image_urls_input"
+                                value={imageUrlInput}
+                                onChange={(event) => setImageUrlInput(event.target.value)}
+                                placeholder="https://example.com/space-front.jpg"
+                            />
+                        </div>
+
+                        <div className="btn-row">
+                            <button className="btn btn-muted" type="button" onClick={addImageUrlsFromInput} disabled={uploadBusy || imageUrls.length >= MAX_IMAGES}>
+                                Add URL Images
+                            </button>
+                            <label className="btn btn-muted" style={{ display: 'inline-flex', alignItems: 'center', cursor: uploadBusy ? 'not-allowed' : 'pointer' }}>
+                                {uploadBusy ? 'Uploading...' : 'Upload Files'}
+                                <input
+                                    type="file"
+                                    accept="image/*"
+                                    multiple
+                                    onChange={handleImageUpload}
+                                    disabled={uploadBusy || imageUrls.length >= MAX_IMAGES}
+                                    style={{ display: 'none' }}
+                                />
+                            </label>
+                        </div>
+
+                        {imageUrls.length > 0 ? (
+                            <div className="listing-image-grid">
+                                {imageUrls.map((url, index) => (
+                                    <div className="listing-image-item" key={`${url}-${index}`}>
+                                        <img src={url} alt={`Listing image ${index + 1}`} />
+                                        <button className="btn btn-danger" type="button" onClick={() => removeImageAt(index)}>Remove</button>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="notice info">Add at least one image to improve booking conversion.</div>
+                        )}
+                    </section>
+
                     <div className="grid-2">
                         <div className="field">
                             <label htmlFor="location_name">Location Name</label>
@@ -245,9 +486,57 @@ function AddSpacePage({ token, user }) {
                         </div>
                     </div>
 
-                    {/* Hidden lat/lon fields – populated automatically by geocoding */}
-                    <input type="hidden" id="lat" name="lat" value={form.lat} />
-                    <input type="hidden" id="lon" name="lon" value={form.lon} />
+                    <section className="stack" style={{ gap: '0.6rem' }}>
+                        <div className="card-title-row">
+                            <h4>Pick Location on Map</h4>
+                            <span className="tiny">Click anywhere on map to set coordinates</span>
+                        </div>
+
+                        <div className="add-space-map-shell">
+                            <MapContainer center={mapCenter} zoom={DEFAULT_ADD_MAP_ZOOM} className="add-space-map-canvas" scrollWheelZoom>
+                                <TileLayer
+                                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                                />
+                                <MapRecenter center={mapCenter} />
+                                <MapClickPicker onPick={handleMapPick} />
+
+                                {selectedPosition ? (
+                                    <Marker position={selectedPosition}>
+                                        <Popup>
+                                            <strong>Selected Listing Location</strong>
+                                            <div>{form.location_name || `${selectedLat.toFixed(6)}, ${selectedLon.toFixed(6)}`}</div>
+                                        </Popup>
+                                    </Marker>
+                                ) : null}
+                            </MapContainer>
+                        </div>
+                    </section>
+
+                    <div className="grid-2">
+                        <div className="field">
+                            <label htmlFor="lat">Latitude</label>
+                            <input
+                                id="lat"
+                                name="lat"
+                                value={form.lat}
+                                onChange={updateForm}
+                                placeholder="Click map or use geocode"
+                                required
+                            />
+                        </div>
+                        <div className="field">
+                            <label htmlFor="lon">Longitude</label>
+                            <input
+                                id="lon"
+                                name="lon"
+                                value={form.lon}
+                                onChange={updateForm}
+                                placeholder="Click map or use geocode"
+                                required
+                            />
+                        </div>
+                    </div>
 
                     <div className="grid-2">
                         <div className="field">

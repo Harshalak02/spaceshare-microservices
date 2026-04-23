@@ -8,6 +8,48 @@ const SLOT_CACHE_TTL_SECONDS = Number(process.env.SLOT_CACHE_TTL_SECONDS || 30);
 const BOOKING_SERVICE_URL = process.env.BOOKING_SERVICE_URL || 'http://localhost:4004';
 const SUBSCRIPTION_SERVICE_URL = process.env.SUBSCRIPTION_SERVICE_URL || 'http://localhost:4005';
 const INTERNAL_HTTP_TIMEOUT_MS = Number(process.env.INTERNAL_HTTP_TIMEOUT_MS || 5000);
+const MAX_LISTING_IMAGES = Number(process.env.MAX_LISTING_IMAGES || 8);
+const MAX_IMAGE_URL_LENGTH = 2 * 1024 * 1024;
+
+function normalizeImageUrls(value) {
+  let items = [];
+
+  if (Array.isArray(value)) {
+    items = value;
+  } else if (typeof value === 'string') {
+    const trimmed = value.trim();
+    items = trimmed ? [trimmed] : [];
+  }
+
+  const seen = new Set();
+  const cleaned = [];
+
+  for (const raw of items) {
+    const candidate = String(raw || '').trim();
+    if (!candidate) continue;
+    if (candidate.length > MAX_IMAGE_URL_LENGTH) continue;
+
+    const isHttp = /^https?:\/\//i.test(candidate);
+    const isDataImage = /^data:image\/[a-z0-9.+-]+;base64,/i.test(candidate);
+    if (!isHttp && !isDataImage) continue;
+
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
+    cleaned.push(candidate);
+
+    if (cleaned.length >= MAX_LISTING_IMAGES) break;
+  }
+
+  return cleaned;
+}
+
+function normalizeSpaceRow(space) {
+  if (!space) return space;
+  return {
+    ...space,
+    image_urls: normalizeImageUrls(space.image_urls)
+  };
+}
 
 function normalizeTime(value) {
   if (!value) return null;
@@ -63,8 +105,9 @@ async function publishListingEvent(type, payload) {
 }
 
 async function createSpace(data) {
-  const { title, description, location_name, lat, lon, price_per_hour, capacity, owner_id, timezone } = data;
+  const { title, description, location_name, lat, lon, price_per_hour, capacity, owner_id, timezone, image_urls } = data;
   const selectedTimezone = timezone || 'UTC';
+  const normalizedImageUrls = normalizeImageUrls(image_urls);
   if (!isValidTimezone(selectedTimezone)) {
     throw new Error('Invalid timezone');
   }
@@ -96,33 +139,34 @@ async function createSpace(data) {
   }
 
   const result = await db.query(
-    `INSERT INTO spaces (title, description, location_name, lat, lon, price_per_hour, capacity, owner_id, timezone)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-    [title, description || '', location_name || '', lat, lon, price_per_hour, capacity, owner_id, selectedTimezone]
+    `INSERT INTO spaces (title, description, location_name, lat, lon, price_per_hour, capacity, owner_id, image_urls, timezone)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10) RETURNING *`,
+    [title, description || '', location_name || '', lat, lon, price_per_hour, capacity, owner_id, JSON.stringify(normalizedImageUrls), selectedTimezone]
   );
-  const space = result.rows[0];
+  const space = normalizeSpaceRow(result.rows[0]);
   await publishListingEvent('LISTING_CREATED', { space });
   return space;
 }
 
 async function getSpace(id) {
   const result = await db.query('SELECT * FROM spaces WHERE id = $1', [id]);
-  return result.rows[0] || null;
+  return normalizeSpaceRow(result.rows[0]) || null;
 }
 
 async function getAllSpaces() {
   const result = await db.query('SELECT * FROM spaces ORDER BY created_at DESC');
-  return result.rows;
+  return result.rows.map(normalizeSpaceRow);
 }
 
 async function getSpacesByOwner(ownerId) {
   const result = await db.query('SELECT * FROM spaces WHERE owner_id = $1 ORDER BY created_at DESC', [ownerId]);
-  return result.rows;
+  return result.rows.map(normalizeSpaceRow);
 }
 
 async function updateSpace(id, data) {
-  const { title, description, location_name, lat, lon, price_per_hour, capacity, timezone } = data;
+  const { title, description, location_name, lat, lon, price_per_hour, capacity, timezone, image_urls } = data;
   const selectedTimezone = timezone || 'UTC';
+  const normalizedImageUrls = normalizeImageUrls(image_urls);
   if (!isValidTimezone(selectedTimezone)) {
     throw new Error('Invalid timezone');
   }
@@ -136,11 +180,12 @@ async function updateSpace(id, data) {
           lon=$5,
           price_per_hour=$6,
           capacity=$7,
-          timezone=$8
-     WHERE id=$9 RETURNING *`,
-    [title, description || '', location_name || '', lat, lon, price_per_hour, capacity, selectedTimezone, id]
+          timezone=$8,
+          image_urls=$9::jsonb
+     WHERE id=$10 RETURNING *`,
+    [title, description || '', location_name || '', lat, lon, price_per_hour, capacity, selectedTimezone, JSON.stringify(normalizedImageUrls), id]
   );
-  const space = result.rows[0];
+  const space = normalizeSpaceRow(result.rows[0]);
   if (space) {
     await invalidateSlotCache(id);
     await publishListingEvent('LISTING_UPDATED', { space });

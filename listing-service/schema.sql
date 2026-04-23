@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS spaces (
   price_per_hour NUMERIC,
   capacity INT,
   owner_id INT,
+  image_urls JSONB NOT NULL DEFAULT '[]'::jsonb,
   timezone VARCHAR(64) NOT NULL DEFAULT 'UTC',
   slot_minutes INT NOT NULL DEFAULT 60,
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
@@ -16,6 +17,7 @@ CREATE TABLE IF NOT EXISTS spaces (
 -- Add columns if upgrading from old schema
 ALTER TABLE spaces ADD COLUMN IF NOT EXISTS location_name TEXT;
 ALTER TABLE spaces ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE spaces ADD COLUMN IF NOT EXISTS image_urls JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE spaces ADD COLUMN IF NOT EXISTS timezone VARCHAR(64) NOT NULL DEFAULT 'UTC';
 ALTER TABLE spaces ADD COLUMN IF NOT EXISTS slot_minutes INT NOT NULL DEFAULT 60;
 ALTER TABLE spaces ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
@@ -29,7 +31,28 @@ BEGIN
   ) THEN
     ALTER TABLE spaces ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at AT TIME ZONE 'UTC';
   END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'spaces' AND column_name = 'image_urls' AND data_type <> 'jsonb'
+  ) THEN
+    ALTER TABLE spaces ALTER COLUMN image_urls TYPE JSONB USING
+      CASE
+        WHEN image_urls IS NULL THEN '[]'::jsonb
+        WHEN pg_typeof(image_urls)::text = 'text[]' THEN to_jsonb(image_urls)
+        WHEN pg_typeof(image_urls)::text = 'text' THEN to_jsonb(ARRAY[image_urls::text])
+        ELSE to_jsonb(image_urls)
+      END;
+  END IF;
 END $$;
+
+UPDATE spaces
+SET image_urls = '[]'::jsonb
+WHERE image_urls IS NULL;
+
+ALTER TABLE spaces ALTER COLUMN image_urls SET DEFAULT '[]'::jsonb;
+ALTER TABLE spaces ALTER COLUMN image_urls SET NOT NULL;
 
 -- Ensure lat/lon are correct type
 ALTER TABLE spaces ALTER COLUMN lat TYPE DOUBLE PRECISION USING lat::DOUBLE PRECISION;
