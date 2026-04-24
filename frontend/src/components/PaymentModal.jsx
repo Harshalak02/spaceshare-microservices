@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 const stripePublishableKey = import.meta.env.VITE_STRIPE_PUBLIC_KEY;
 
-function CheckoutForm({ onPaymentSuccess, onPaymentFailure, onCancel, isExpired }) {
+function CheckoutForm({ onPaymentSuccess, onPaymentFailure, onCancel, isExpired, onProcessingChange }) {
   const stripe = useStripe();
   const elements = useElements();
   const [message, setMessage] = useState(null);
@@ -16,28 +16,36 @@ function CheckoutForm({ onPaymentSuccess, onPaymentFailure, onCancel, isExpired 
     if (!stripe || !elements || isExpired) return;
 
     setIsProcessing(true);
-
-    const { error, paymentIntent } = await stripe.confirmPayment({
-      elements,
-      redirect: 'if_required'
-    });
-
-    if (error) {
-      setMessage(error.message);
-      if (onPaymentFailure) {
-        onPaymentFailure(error.message || 'Payment failed');
-      }
-    } else if (paymentIntent && paymentIntent.status === 'succeeded') {
-      setMessage('Payment successful.');
-      onPaymentSuccess();
-    } else {
-      setMessage('Payment requires additional action.');
-      if (onPaymentFailure) {
-        onPaymentFailure('Payment requires additional action.');
-      }
+    if (onProcessingChange) {
+      onProcessingChange(true);
     }
 
-    setIsProcessing(false);
+    try {
+      const { error, paymentIntent } = await stripe.confirmPayment({
+        elements,
+        redirect: 'if_required'
+      });
+
+      if (error) {
+        setMessage(error.message);
+        if (onPaymentFailure) {
+          onPaymentFailure(error.message || 'Payment failed');
+        }
+      } else if (paymentIntent && paymentIntent.status === 'succeeded') {
+        setMessage('Payment successful.');
+        onPaymentSuccess();
+      } else {
+        setMessage('Payment requires additional action.');
+        if (onPaymentFailure) {
+          onPaymentFailure('Payment requires additional action.');
+        }
+      }
+    } finally {
+      setIsProcessing(false);
+      if (onProcessingChange) {
+        onProcessingChange(false);
+      }
+    }
   };
 
   return (
@@ -85,13 +93,16 @@ export default function PaymentModal({
     ? Math.max(0, Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 1000))
     : 0;
   const [remainingSeconds, setRemainingSeconds] = useState(initialRemainingSeconds);
+  const [stripeProcessing, setStripeProcessing] = useState(false);
   const expiryTriggeredRef = useRef(false);
+  const interactionLocked = paymentBusy || stripeProcessing;
 
   useEffect(() => {
     const freshRemaining = expiresAt
       ? Math.max(0, Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 1000))
       : 0;
     setRemainingSeconds(freshRemaining);
+    setStripeProcessing(false);
     expiryTriggeredRef.current = false;
   }, [expiresAt, intentId]);
 
@@ -107,14 +118,14 @@ export default function PaymentModal({
   }, [expiresAt]);
 
   useEffect(() => {
-    if (remainingSeconds > 0 || expiryTriggeredRef.current) return;
+    if (remainingSeconds > 0 || expiryTriggeredRef.current || interactionLocked) return;
     expiryTriggeredRef.current = true;
     if (onExpired) {
       onExpired();
       return;
     }
     onCancel();
-  }, [remainingSeconds, onCancel, onExpired]);
+  }, [remainingSeconds, onCancel, onExpired, interactionLocked]);
 
   const isExpired = remainingSeconds <= 0;
   const stripePromise = useMemo(() => {
@@ -138,7 +149,7 @@ export default function PaymentModal({
               Time remaining: {formatCountdown(remainingSeconds)}
             </div>
           </div>
-          <button className="btn btn-muted" type="button" onClick={onCancel} disabled={paymentBusy}>
+          <button className="btn btn-muted" type="button" onClick={onCancel} disabled={interactionLocked}>
             Close
           </button>
         </div>
@@ -154,7 +165,7 @@ export default function PaymentModal({
                 className="btn btn-primary"
                 type="button"
                 onClick={onMockPayment}
-                disabled={paymentBusy || !onMockPayment || isExpired}
+                disabled={interactionLocked || !onMockPayment || isExpired}
               >
                 {paymentBusy ? (
                   <span className="btn-with-spinner">
@@ -163,7 +174,7 @@ export default function PaymentModal({
                   </span>
                 ) : 'Confirm Mock Payment'}
               </button>
-              <button className="btn btn-muted" type="button" onClick={onCancel} disabled={paymentBusy}>
+              <button className="btn btn-muted" type="button" onClick={onCancel} disabled={interactionLocked}>
                 Cancel
               </button>
             </div>
@@ -175,6 +186,7 @@ export default function PaymentModal({
               onPaymentFailure={onPaymentFailure}
               onCancel={onCancel}
               isExpired={isExpired}
+              onProcessingChange={setStripeProcessing}
             />
           </Elements>
         ) : (
