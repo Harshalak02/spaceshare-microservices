@@ -7,13 +7,27 @@ async function search(req, res) {
       return res.status(400).json({ message: 'lat and lon are required' });
     }
 
-    const result = await searchSpaces(req.query);
+    // Pass through all query params — the service handles defaults/validation
+    const params = {
+      lat: req.query.lat,
+      lon: req.query.lon,
+      radiusKm: req.query.radiusKm || req.query.radius,
+      min_price: req.query.min_price,
+      max_price: req.query.max_price,
+      capacity: req.query.capacity,
+      q: req.query.q,
+      sort_by: req.query.sort_by,
+      page: req.query.page,
+      limit: req.query.limit
+    };
+
+    const result = await searchSpaces(params);
 
     // Publish analytics event
     await redis.publish('events', JSON.stringify({
       type: 'SEARCH_PERFORMED',
       timestamp: new Date().toISOString(),
-      payload: req.query
+      payload: params
     }));
 
     res.json(result);
