@@ -54,3 +54,5 @@ ALTER TABLE spaces ALTER COLUMN lat TYPE DOUBLE PRECISION USING lat::DOUBLE PREC
 ALTER TABLE spaces ALTER COLUMN lon TYPE DOUBLE PRECISION USING lon::DOUBLE PRECISION;
 
 CREATE INDEX IF NOT EXISTS idx_search_spaces_lat_lon ON spaces(lat, lon);
+CREATE INDEX IF NOT EXISTS idx_search_spaces_price ON spaces(price_per_hour);
+CREATE INDEX IF NOT EXISTS idx_search_spaces_capacity ON spaces(capacity);
