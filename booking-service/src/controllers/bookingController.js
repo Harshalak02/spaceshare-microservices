@@ -37,6 +37,7 @@ async function create(req, res) {
     const status =
       error.message.includes('already booked') ? 409 :
       error.message.includes('not found') ? 404 :
+      error.message.includes('Circuit breaker') ? 503 :
       error.message.includes('invalid') || error.message.includes('required') || error.message.includes('Guest') || error.message.includes('timezone') ? 400 :
       500;
     res.status(status).json({ message: error.message });
@@ -45,8 +46,11 @@ async function create(req, res) {
 
 async function getMy(req, res) {
   try {
-    const bookings = await service.getBookingsByUser(req.user.userId);
-    res.json(bookings);
+    const result = await service.getBookingsByUser(req.user.userId, {
+      page: req.query.page,
+      limit: req.query.limit,
+    });
+    res.json(result);
   } catch (error) {
     res.status(500).json({ message: 'Failed to get bookings', error: error.message });
   }
@@ -62,8 +66,11 @@ async function getByUser(req, res) {
       return res.status(403).json({ message: 'Forbidden' });
     }
 
-    const bookings = await service.getBookingsByUser(req.params.user_id);
-    res.json(bookings);
+    const result = await service.getBookingsByUser(req.params.user_id, {
+      page: req.query.page,
+      limit: req.query.limit,
+    });
+    res.json(result);
   } catch (error) {
     res.status(500).json({ message: 'Failed to get bookings', error: error.message });
   }
@@ -71,8 +78,11 @@ async function getByUser(req, res) {
 
 async function getHostMy(req, res) {
   try {
-    const bookings = await service.getBookingsByHost(req.user.userId);
-    res.json(bookings);
+    const result = await service.getBookingsByHost(req.user.userId, {
+      page: req.query.page,
+      limit: req.query.limit,
+    });
+    res.json(result);
   } catch (error) {
     res.status(500).json({ message: 'Failed to get host bookings', error: error.message });
   }
@@ -173,7 +183,8 @@ async function confirmInternalPayment(req, res) {
 
     return res.json(updated);
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to confirm booking' });
+    const status = error.message.includes('Invalid state transition') ? 409 : 500;
+    return res.status(status).json({ message: error.message || 'Failed to confirm booking' });
   }
 }
 

@@ -5,7 +5,12 @@ const path = require('path');
 
 neonConfig.webSocketConstructor = ws;
 
-const pool = new Pool({ connectionString: process.env.DB_URL });
+const pool = new Pool({
+    connectionString: process.env.DB_URL,
+    max: Number(process.env.DB_POOL_MAX || 30),
+    idleTimeoutMillis: Number(process.env.DB_POOL_IDLE_TIMEOUT_MS || 30000),
+    connectionTimeoutMillis: Number(process.env.DB_POOL_CONNECT_TIMEOUT_MS || 5000),
+});
 
 pool.on('connect', async (client) => {
     try {

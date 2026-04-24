@@ -165,3 +165,24 @@ WHERE idempotency_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_bookings_user_time ON bookings(user_id, start_time DESC);
 CREATE INDEX IF NOT EXISTS idx_bookings_host_time ON bookings(host_id, start_time DESC);
 CREATE INDEX IF NOT EXISTS idx_booking_slots_space_time ON booking_slots(space_id, slot_start_utc);
+
+-- ──────────────────────────────────────────────────────────
+-- Outbox Events table (Fix 8: Transactional Outbox Pattern)
+-- Events are inserted within the same transaction as the
+-- booking write, then published by a background poller.
+-- This guarantees at-least-once delivery without external queues.
+-- ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS outbox_events (
+  id BIGSERIAL PRIMARY KEY,
+  aggregate_type VARCHAR(64) NOT NULL,
+  aggregate_id BIGINT NOT NULL,
+  event_type VARCHAR(64) NOT NULL,
+  payload JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  published_at TIMESTAMPTZ,
+  published BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+CREATE INDEX IF NOT EXISTS idx_outbox_unpublished
+ON outbox_events(published, created_at)
+WHERE published = FALSE;

@@ -51,6 +51,18 @@ async function removeSpace(id) {
   await db.query('DELETE FROM spaces WHERE id = $1', [id]);
 }
 
+async function invalidateSearchCache() {
+  try {
+    const keys = await redis.keys('search:*');
+    if (keys.length > 0) {
+      await redis.del(...keys);
+      console.log(`✅ [search-service] Invalidated ${keys.length} cached search key(s)`);
+    }
+  } catch (error) {
+    console.error('❌ [search-service] Failed to invalidate search cache:', error.message);
+  }
+}
+
 async function handleListingEvent(message) {
   let event;
 
@@ -61,12 +73,20 @@ async function handleListingEvent(message) {
   }
 
   try {
+    let listingChanged = false;
+
     if (event.type === 'LISTING_CREATED' || event.type === 'LISTING_UPDATED') {
       await upsertSpace(event.payload?.space);
+      listingChanged = true;
     }
 
     if (event.type === 'LISTING_DELETED') {
       await removeSpace(event.payload?.id);
+      listingChanged = true;
+    }
+
+    if (listingChanged) {
+      await invalidateSearchCache();
     }
   } catch (error) {
     console.error('❌ [search-service] Failed to process listing event:', error.message);

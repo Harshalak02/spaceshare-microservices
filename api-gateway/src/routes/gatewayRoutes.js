@@ -1,11 +1,17 @@
 const express = require('express');
 const authMiddleware = require('../middleware/authMiddleware');
 const { forwardRequest } = require('../services/proxyService');
+const { bookingWriteLimiter, authLimiter } = require('../middleware/rateLimiter');
 
 const router = express.Router();
 
-// Public routes (no auth needed)
-router.use('/auth', (req, res) => forwardRequest(process.env.AUTH_SERVICE_URL, req, res));
+// ──────────────────────────────────────────────────────────
+// Fix 6: Auth rate limiter — 20 attempts/min per IP.
+// ──────────────────────────────────────────────────────────
+router.use('/auth', authLimiter.middleware((req) => `ip:${req.ip}`), (req, res) =>
+	forwardRequest(process.env.AUTH_SERVICE_URL, req, res)
+);
+
 router.use('/search', (req, res) => {
 	const targetPath = req.path === '/spaces' ? '/' : req.path;
 	return forwardRequest(process.env.SEARCH_SERVICE_URL, req, res, { targetPath });
@@ -13,7 +19,16 @@ router.use('/search', (req, res) => {
 
 // Protected routes (auth required)
 router.use('/listings', authMiddleware, (req, res) => forwardRequest(process.env.LISTING_SERVICE_URL, req, res));
+
+// ──────────────────────────────────────────────────────────
+// Fix 6: Booking write rate limiter — 10 attempts/min per user.
+// Applied only to POST /book (write path), not to GETs.
+// ──────────────────────────────────────────────────────────
+router.post('/bookings/book', authMiddleware, bookingWriteLimiter.middleware(), (req, res) =>
+	forwardRequest(process.env.BOOKING_SERVICE_URL, req, res, { targetPath: '/book' })
+);
 router.use('/bookings', authMiddleware, (req, res) => forwardRequest(process.env.BOOKING_SERVICE_URL, req, res));
+
 router.use('/payments', authMiddleware, (req, res) => forwardRequest(process.env.PAYMENT_SERVICE_URL, req, res));
 router.use('/notifications', authMiddleware, (req, res) => {
 	let targetPath = req.path;

@@ -2,6 +2,7 @@ require('dotenv').config();
 const app = require('./src/app');
 const Redis = require('ioredis');
 const bookingService = require('./src/services/bookingService');
+const { startOutboxPoller } = require('./src/services/outboxPublisher');
 
 const PORT = process.env.PORT || 4004;
 const STALE_PENDING_CLEANUP_INTERVAL_MS = Number(process.env.STALE_PENDING_CLEANUP_INTERVAL_MS || 30000);
@@ -37,17 +38,36 @@ subscriber.on('message', async (_channel, message) => {
 	}
 });
 
-// if (STALE_PENDING_CLEANUP_INTERVAL_MS > 0) {
-// 	setInterval(async () => {
-// 		try {
-// 			const deleted = await bookingService.cleanupStalePendingBookings();
-// 			if (deleted.length > 0) {
-// 				console.log(`✅ [booking-service] Cleaned ${deleted.length} stale pending booking(s)`);
-// 			}
-// 		} catch (error) {
-// 			console.error('❌ [booking-service] Stale booking cleanup failed:', error.message);
-// 		}
-// 	}, STALE_PENDING_CLEANUP_INTERVAL_MS);
-// }
+// ──────────────────────────────────────────────────────────
+// Fix 2: Re-enable stale pending booking cleanup.
+// Abandoned pending bookings (past their payment window)
+// permanently block slots. This background job cleans them
+// with jitter to prevent thundering-herd across instances.
+// ──────────────────────────────────────────────────────────
+if (STALE_PENDING_CLEANUP_INTERVAL_MS > 0) {
+	// Add initial jitter (0-5 seconds) so multiple instances don't all clean at the same time
+	const initialJitterMs = Math.floor(Math.random() * 5000);
+	setTimeout(() => {
+		setInterval(async () => {
+			try {
+				const deleted = await bookingService.cleanupStalePendingBookings();
+				if (deleted.length > 0) {
+					console.log(`✅ [booking-service] Cleaned ${deleted.length} stale pending booking(s)`);
+				}
+			} catch (error) {
+				console.error('❌ [booking-service] Stale booking cleanup failed:', error.message);
+			}
+		}, STALE_PENDING_CLEANUP_INTERVAL_MS);
+	}, initialJitterMs);
+
+	console.log(`✅ [booking-service] Stale cleanup scheduled (interval=${STALE_PENDING_CLEANUP_INTERVAL_MS}ms, jitter=${initialJitterMs}ms)`);
+}
+
+// ──────────────────────────────────────────────────────────
+// Fix 8: Start the outbox poller for reliable event delivery.
+// Events written to the outbox table during booking transactions
+// are published to Redis pub/sub by this background poller.
+// ──────────────────────────────────────────────────────────
+startOutboxPoller();
 
 app.listen(PORT, () => console.log(`Booking service running on ${PORT}`));

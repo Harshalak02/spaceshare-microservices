@@ -2,6 +2,9 @@ const db = require('../models/db');
 const redis = require('../models/redis');
 const http = require('http');
 const { parseUtcInput, toUtcIsoString } = require('../utils/dateTime');
+const { CircuitBreaker } = require('../utils/circuitBreaker');
+const { withRetry } = require('../utils/retry');
+const { insertOutboxEvent } = require('./outboxPublisher');
 
 const LISTING_SERVICE_URL = process.env.LISTING_SERVICE_URL || 'http://localhost:4002';
 const INTERNAL_HTTP_TIMEOUT_MS = Number(process.env.INTERNAL_HTTP_TIMEOUT_MS || 5000);
@@ -16,6 +19,39 @@ const BOOKING_TIMESTAMP_FIELDS = [
 ];
 const PAYMENT_WINDOW_SECONDS = Math.max(1, Number(process.env.PAYMENT_UI_WINDOW_SECONDS || 60));
 const STALE_PENDING_RELEASE_SECONDS = Math.max(1, Number(process.env.STALE_PENDING_RELEASE_SECONDS || 120));
+const DEFAULT_PAGE_SIZE = Number(process.env.BOOKING_DEFAULT_PAGE_SIZE || 50);
+const MAX_PAGE_SIZE = Number(process.env.BOOKING_MAX_PAGE_SIZE || 200);
+
+// ──────────────────────────────────────────────────────────
+// Fix 1: Booking State Machine Guards
+// Design pattern: State Machine — explicit transition map
+// ensures only valid lifecycle transitions are allowed.
+// ──────────────────────────────────────────────────────────
+const VALID_TRANSITIONS = {
+  pending:   ['confirmed', 'cancelled', 'expired'],
+  confirmed: ['cancelled', 'completed'],
+  cancelled: [],  // terminal state
+  completed: [],  // terminal state
+  expired:   [],  // terminal state
+};
+
+function isValidTransition(fromStatus, toStatus) {
+  const allowed = VALID_TRANSITIONS[fromStatus];
+  if (!allowed) return false;
+  return allowed.includes(toStatus);
+}
+
+// ──────────────────────────────────────────────────────────
+// Fix 4: Circuit Breaker for Listing Service calls
+// Architecture tactic: Fault Isolation — fast-fail when
+// listing-service is consistently unavailable.
+// ──────────────────────────────────────────────────────────
+const listingCircuitBreaker = new CircuitBreaker('listing-service', {
+  failureThreshold: 5,
+  resetTimeoutMs: 30000,
+  halfOpenMaxAttempts: 2,
+  rollingWindowMs: 60000,
+});
 
 function toDecimal(value) {
   return Number(Number(value).toFixed(2));
@@ -54,6 +90,10 @@ function getPaymentWindow(now = new Date()) {
   return { startedAt, expiresAt };
 }
 
+// ──────────────────────────────────────────────────────────
+// Legacy direct publish — kept as fallback; primary delivery
+// now goes through the outbox table (Fix 8).
+// ──────────────────────────────────────────────────────────
 async function publishBookingEvent(type, payload) {
   try {
     await redis.publish('events', JSON.stringify({
@@ -101,16 +141,35 @@ async function httpGetJson(requestOptions, timeoutMs) {
   });
 }
 
+// ──────────────────────────────────────────────────────────
+// Fix 4 + Fix 5: Circuit Breaker + Retry on listing fetch.
+// The listing fetch is wrapped in retry (for transient failures)
+// and circuit breaker (for sustained failures).
+// ──────────────────────────────────────────────────────────
 async function fetchListingSnapshot(spaceId) {
-  const endpoint = new URL(`/spaces/${spaceId}`, LISTING_SERVICE_URL);
-  const requestOptions = {
-    protocol: endpoint.protocol,
-    hostname: endpoint.hostname,
-    port: endpoint.port || (endpoint.protocol === 'https:' ? 443 : 80),
-    path: `${endpoint.pathname}${endpoint.search}`
-  };
-
-  return httpGetJson(requestOptions, INTERNAL_HTTP_TIMEOUT_MS);
+  return listingCircuitBreaker.execute(() =>
+    withRetry(
+      () => {
+        const endpoint = new URL(`/spaces/${spaceId}`, LISTING_SERVICE_URL);
+        const requestOptions = {
+          protocol: endpoint.protocol,
+          hostname: endpoint.hostname,
+          port: endpoint.port || (endpoint.protocol === 'https:' ? 443 : 80),
+          path: `${endpoint.pathname}${endpoint.search}`
+        };
+        return httpGetJson(requestOptions, INTERNAL_HTTP_TIMEOUT_MS);
+      },
+      {
+        maxRetries: 3,
+        baseDelayMs: 200,
+        maxDelayMs: 2000,
+        retryableErrors: (error) => {
+          // Don't retry 404s (listing genuinely not found)
+          return !error.message.includes('not found');
+        }
+      }
+    )
+  );
 }
 
 async function createBooking(data) {
@@ -269,28 +328,17 @@ async function createBooking(data) {
       [booking.id, 'new', status, user_id, null]
     );
 
+    // ── Fix 8: Write events to outbox within the same transaction ──
+    await insertOutboxEvent(client, 'booking', booking.id, 'BOOKING_CREATED', {
+      booking_id: booking.id,
+      space_id: booking.space_id,
+      slot_count: booking.slot_count,
+      status: booking.status,
+    });
+
     await client.query('COMMIT');
 
     const normalizedBooking = normalizeBookingRow(booking);
-
-    await publishBookingEvent('BOOKING_CREATED', {
-      booking_id: normalizedBooking.id,
-      space_id: normalizedBooking.space_id,
-      slot_count: normalizedBooking.slot_count,
-      status: normalizedBooking.status
-    });
-
-    if (status === 'confirmed') {
-      await publishBookingEvent('BOOKING_CONFIRMED', {
-        booking_id: normalizedBooking.id,
-        space_id: normalizedBooking.space_id,
-        start_slot_utc: normalizedBooking.start_slot_utc,
-        end_slot_utc: normalizedBooking.end_slot_utc,
-        slot_count: normalizedBooking.slot_count,
-        user_id: normalizedBooking.user_id,
-        host_id: normalizedBooking.host_id
-      });
-    }
 
     return normalizedBooking;
   } catch (error) {
@@ -307,12 +355,26 @@ async function cleanupStalePendingBookings() {
     `DELETE FROM bookings
      WHERE status = 'pending'
        AND payment_window_started_at <= $1
-     RETURNING id`,
+     RETURNING id, space_id`,
     [staleCutoff.toISOString()]
   );
+
+  // Publish BOOKING_EXPIRED events for analytics and notifications
+  for (const row of result.rows) {
+    await publishBookingEvent('BOOKING_EXPIRED', {
+      booking_id: row.id,
+      space_id: row.space_id,
+      reason: 'Payment window expired',
+    });
+  }
+
   return result.rows;
 }
 
+// ──────────────────────────────────────────────────────────
+// Fix 1: State Machine guard applied to updateBookingStatus.
+// Rejects transitions not in VALID_TRANSITIONS map.
+// ──────────────────────────────────────────────────────────
 async function updateBookingStatus(bookingId, status, changedBy = null, reason = null) {
   const parsedChangedBy = Number(changedBy);
   const resolvedChangedBy = Number.isInteger(parsedChangedBy) && parsedChangedBy > 0 ? parsedChangedBy : 0;
@@ -333,6 +395,14 @@ async function updateBookingStatus(bookingId, status, changedBy = null, reason =
       return normalizeBookingRow(current);
     }
 
+    // ── State Machine Guard ──
+    if (!isValidTransition(current.status, status)) {
+      await client.query('ROLLBACK');
+      throw new Error(
+        `Invalid state transition: cannot move from '${current.status}' to '${status}'`
+      );
+    }
+
     const updatedResult = await client.query(
       `UPDATE bookings
        SET status = $1
@@ -349,25 +419,24 @@ async function updateBookingStatus(bookingId, status, changedBy = null, reason =
       [bookingId, current.status, status, resolvedChangedBy, reason]
     );
 
-    await client.query('COMMIT');
-
-    const normalizedUpdated = normalizeBookingRow(updated);
-
+    // ── Fix 8: Write confirmation/completion events to outbox ──
     if (status === 'confirmed') {
-      await publishBookingEvent('BOOKING_CONFIRMED', {
-        booking_id: normalizedUpdated.id,
-        space_id: normalizedUpdated.space_id,
-        start_time: normalizedUpdated.start_time,
-        end_time: normalizedUpdated.end_time,
-        start_slot_utc: normalizedUpdated.start_slot_utc,
-        end_slot_utc: normalizedUpdated.end_slot_utc,
-        slot_count: normalizedUpdated.slot_count,
-        user_id: normalizedUpdated.user_id,
-        host_id: normalizedUpdated.host_id
+      await insertOutboxEvent(client, 'booking', bookingId, 'BOOKING_CONFIRMED', {
+        booking_id: updated.id,
+        space_id: updated.space_id,
+        start_time: toUtcIsoString(updated.start_time),
+        end_time: toUtcIsoString(updated.end_time),
+        start_slot_utc: toUtcIsoString(updated.start_slot_utc),
+        end_slot_utc: toUtcIsoString(updated.end_slot_utc),
+        slot_count: updated.slot_count,
+        user_id: updated.user_id,
+        host_id: updated.host_id,
       });
     }
 
-    return normalizedUpdated;
+    await client.query('COMMIT');
+
+    return normalizeBookingRow(updated);
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -376,14 +445,49 @@ async function updateBookingStatus(bookingId, status, changedBy = null, reason =
   }
 }
 
-async function getBookingsByUser(userId) {
-  const result = await db.query('SELECT * FROM bookings WHERE user_id=$1 ORDER BY start_time DESC', [userId]);
-  return result.rows.map(normalizeBookingRow);
+// ──────────────────────────────────────────────────────────
+// Fix 10: Pagination for booking queries.
+// Prevents unbounded result sets at scale (50K users).
+// ──────────────────────────────────────────────────────────
+function resolvePagination(options = {}) {
+  const page = Math.max(1, Number(options.page || 1));
+  const limit = Math.min(MAX_PAGE_SIZE, Math.max(1, Number(options.limit || DEFAULT_PAGE_SIZE)));
+  const offset = (page - 1) * limit;
+  return { page, limit, offset };
 }
 
-async function getBookingsByHost(hostId) {
-  const result = await db.query('SELECT * FROM bookings WHERE host_id=$1 ORDER BY start_time DESC', [hostId]);
-  return result.rows.map(normalizeBookingRow);
+async function getBookingsByUser(userId, options = {}) {
+  const { page, limit, offset } = resolvePagination(options);
+
+  const countResult = await db.query('SELECT COUNT(*) FROM bookings WHERE user_id=$1', [userId]);
+  const total = parseInt(countResult.rows[0].count, 10);
+
+  const result = await db.query(
+    'SELECT * FROM bookings WHERE user_id=$1 ORDER BY start_time DESC LIMIT $2 OFFSET $3',
+    [userId, limit, offset]
+  );
+
+  return {
+    data: result.rows.map(normalizeBookingRow),
+    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+  };
+}
+
+async function getBookingsByHost(hostId, options = {}) {
+  const { page, limit, offset } = resolvePagination(options);
+
+  const countResult = await db.query('SELECT COUNT(*) FROM bookings WHERE host_id=$1', [hostId]);
+  const total = parseInt(countResult.rows[0].count, 10);
+
+  const result = await db.query(
+    'SELECT * FROM bookings WHERE host_id=$1 ORDER BY start_time DESC LIMIT $2 OFFSET $3',
+    [hostId, limit, offset]
+  );
+
+  return {
+    data: result.rows.map(normalizeBookingRow),
+    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+  };
 }
 
 async function cancelBooking(bookingId, actorUserId, role, reason) {
@@ -434,17 +538,18 @@ async function cancelBooking(bookingId, actorUserId, role, reason) {
       [bookingId, booking.status, 'cancelled', actorUserId, reason || null]
     );
 
-    await client.query('COMMIT');
-
-    const updated = normalizeBookingRow(updatedResult.rows[0]);
-    await publishBookingEvent('BOOKING_CANCELLED', {
+    // ── Fix 8: Cancellation event via outbox ──
+    const updated = updatedResult.rows[0];
+    await insertOutboxEvent(client, 'booking', bookingId, 'BOOKING_CANCELLED', {
       booking_id: updated.id,
       space_id: updated.space_id,
-      cancelled_at: updated.cancelled_at,
-      cancelled_by: actorUserId
+      cancelled_at: toUtcIsoString(updated.cancelled_at),
+      cancelled_by: actorUserId,
     });
 
-    return updated;
+    await client.query('COMMIT');
+
+    return normalizeBookingRow(updated);
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -477,16 +582,17 @@ async function deletePendingBooking(bookingId, actorUserId, role, reason = null)
       throw new Error('Only pending bookings can be deleted');
     }
 
-    await client.query('DELETE FROM bookings WHERE id = $1', [bookingId]);
-    await client.query('COMMIT');
-
-    await publishBookingEvent('BOOKING_CANCELLED', {
+    // ── Fix 8: Write cancellation event to outbox before deleting ──
+    await insertOutboxEvent(client, 'booking', bookingId, 'BOOKING_CANCELLED', {
       booking_id: booking.id,
       space_id: booking.space_id,
       cancelled_at: new Date().toISOString(),
       cancelled_by: actorUserId,
-      reason: reason || 'Payment not completed; booking deleted'
+      reason: reason || 'Payment not completed; booking deleted',
     });
+
+    await client.query('DELETE FROM bookings WHERE id = $1', [bookingId]);
+    await client.query('COMMIT');
 
     return { deleted: true, booking_id: booking.id, space_id: booking.space_id };
   } catch (error) {
@@ -526,6 +632,11 @@ async function getReservedSlots(spaceId, from, to) {
   }));
 }
 
+/** Expose circuit breaker status for health checks. */
+function getCircuitBreakerStatus() {
+  return listingCircuitBreaker.getStatus();
+}
+
 module.exports = {
   createBooking,
   updateBookingStatus,
@@ -534,5 +645,7 @@ module.exports = {
   cancelBooking,
   deletePendingBooking,
   getReservedSlots,
-  cleanupStalePendingBookings
+  cleanupStalePendingBookings,
+  getCircuitBreakerStatus,
+  VALID_TRANSITIONS,
 };

@@ -40,8 +40,12 @@ function HostBookingsPage({ token, user }) {
     setNotice({ type: '', text: '' });
 
     try {
-      const result = await apiRequest('/bookings/bookings/host/my', { token });
-      const sorted = [...(result || [])].sort(
+      const payload = await apiRequest('/bookings/bookings/host/my?page=1&limit=100', { token });
+      const bookingsList = Array.isArray(payload)
+        ? payload
+        : (Array.isArray(payload?.data) ? payload.data : []);
+
+      const sorted = [...bookingsList].sort(
         (a, b) => {
           const first = parseUtcDate(b.start_time || b.start_slot_utc)?.getTime() || 0;
           const second = parseUtcDate(a.start_time || a.start_slot_utc)?.getTime() || 0;

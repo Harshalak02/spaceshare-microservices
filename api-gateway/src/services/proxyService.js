@@ -15,6 +15,8 @@ async function forwardRequest(serviceUrl, req, res, options = {}) {
       params: req.query,
       headers: {
         Authorization: req.headers.authorization || '',
+        // Fix 7: Forward correlation ID to downstream services for tracing
+        'x-correlation-id': req.correlationId || req.headers['x-correlation-id'] || '',
         ...extraHeaders
       }
     });
