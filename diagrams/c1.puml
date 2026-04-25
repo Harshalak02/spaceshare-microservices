@@ -1,0 +1,26 @@
+@startuml C4_Context_SpaceShare
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+
+LAYOUT_WITH_LEGEND()
+
+title System Context Diagram — SpaceShare
+
+Person(guest, "Guest", "Searches for and books\nco-working spaces by the hour.")
+Person(host, "Host / Space Owner", "Lists co-working spaces\nunder a subscription plan.")
+Person(admin, "Platform Admin", "Manages listings, disputes,\nand platform analytics.")
+
+System(spaceshare, "SpaceShare Platform", "Subscription-based co-working\nspace marketplace.\nNode.js microservices + React SPA.")
+
+System_Ext(stripe, "Stripe", "Payment processing.\nHandles card data and\nPCI compliance.")
+System_Ext(smtp, "SMTP Server\n(e.g. Gmail / SendGrid)", "Delivers booking confirmation\nemails to guests and hosts.")
+System_Ext(osm, "OpenStreetMap / Leaflet", "Provides interactive map\ntiles and geo-coding.")
+
+Rel(guest,   spaceshare, "Searches spaces,\ncreates bookings,\npays for slots", "HTTPS / REST")
+Rel(host,    spaceshare, "Manages listings,\nviews bookings,\npurchases subscription", "HTTPS / REST")
+Rel(admin,   spaceshare, "Moderates content,\nviews analytics", "HTTPS / REST")
+
+Rel(spaceshare, stripe, "Creates PaymentIntents,\nreceives webhooks", "HTTPS / Stripe SDK")
+Rel(spaceshare, smtp,   "Sends booking\nconfirmation emails", "SMTP / Nodemailer")
+Rel(spaceshare, osm,    "Loads map tiles\nand geocodes addresses", "HTTPS")
+
+@enduml

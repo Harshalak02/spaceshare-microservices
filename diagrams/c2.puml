@@ -1,0 +1,95 @@
+@startuml C4_Container_SpaceShare
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+LAYOUT_TOP_DOWN()
+LAYOUT_WITH_LEGEND()
+
+title Container Diagram — SpaceShare
+
+Person(guest, "Guest")
+Person(host,  "Host")
+
+System_Boundary(spaceshare, "SpaceShare Platform") {
+
+  Container(frontend, "React SPA", "React 18 + Vite\nLeaflet / OpenStreetMap",
+            "Single-page application.\nAll requests routed via API Gateway.")
+
+  Container(gateway, "API Gateway", "Node.js / Express",
+            "Single entry point.\n[Pattern 4: Proxy/Gateway]\nJWT validation, path rewriting,\nrate limiting, correlation IDs.")
+
+  Container(auth, "Auth Service", "Node.js / Express\nPostgreSQL",
+            "User registration & login.\nIssues JWT tokens (bcrypt + jsonwebtoken).")
+
+  Container(listing, "Listing Service", "Node.js / Express\nPostgreSQL + Redis",
+            "CRUD for spaces.\nWeekly schedules & slot generation.\n[Pattern 1: Strategy]\nEnforces plan limits via PlanStrategy.")
+
+  Container(search, "Search Service", "Node.js / Express\nPostgreSQL + Redis",
+            "Geo-spatial bounding-box search.\n[Cache-Aside Tactic]\nRedis read-through cache, TTL 300 s.")
+
+  Container(booking, "Booking Service", "Node.js / Express\nPostgreSQL (ACID) + Redis",
+            "Booking lifecycle.\n[DB Constraint Tactic]\nUnique partial index prevents\ndouble-bookings (error 23505 → HTTP 409).\nStale-pending TTL cleanup.")
+
+  Container(payment, "Payment Service", "Node.js / Express\nPostgreSQL + Stripe SDK",
+            "Payment sessions & webhooks.\n[Pattern 2: Adapter]\nStripeAdapter / MockAdapter\nswapped via PAYMENT_PROVIDER env var.")
+
+  Container(subscription, "Subscription Service", "Node.js / Express\nPostgreSQL",
+            "Host plan management.\nFree / Basic / Pro tiers.\nExpiry computation & status queries.")
+
+  Container(notification, "Notification Service", "Node.js / Express\nPostgreSQL + ioredis",
+            "Redis Pub/Sub subscriber.\n[Pattern 3: Observer]\nNotificationEventBus fans out to\nEmailChannel + ConsoleChannel.")
+
+  ContainerDb(redis, "Redis", "Redis 7",
+              "Dual role:\n• Search / slot cache (TTL)\n• Event bus (Pub/Sub channel: 'events')")
+
+  ContainerDb(postgres_auth,  "Auth DB",          "PostgreSQL", "users, credentials")
+  ContainerDb(postgres_lst,   "Listing DB",       "PostgreSQL", "spaces, schedules, overrides")
+  ContainerDb(postgres_bk,    "Booking DB",       "PostgreSQL", "bookings, booking_slots\n(unique partial index)")
+  ContainerDb(postgres_pay,   "Payment DB",       "PostgreSQL", "payments, provider_reference")
+  ContainerDb(postgres_sub,   "Subscription DB",  "PostgreSQL", "subscriptions, plan_type")
+  ContainerDb(postgres_notif, "Notification DB",  "PostgreSQL", "notification_log")
+}
+
+System_Ext(stripe_ext, "Stripe", "External payment processor")
+System_Ext(smtp_ext,   "SMTP Server", "Email delivery")
+
+' ── Client → Frontend → Gateway ──────────────────────────────────────────────
+Rel(guest,    frontend, "Uses browser", "HTTPS")
+Rel(host,     frontend, "Uses browser", "HTTPS")
+Rel(frontend, gateway,  "All API calls", "HTTPS / REST")
+
+' ── Gateway → Services ────────────────────────────────────────────────────────
+Rel(gateway, auth,         "/api/auth/**",         "HTTP")
+Rel(gateway, listing,      "/api/listings/**",     "HTTP")
+Rel(gateway, search,       "/api/search/**",       "HTTP")
+Rel(gateway, booking,      "/api/bookings/**",     "HTTP")
+Rel(gateway, payment,      "/api/payments/**",     "HTTP")
+Rel(gateway, subscription, "/api/subscriptions/**","HTTP")
+Rel(gateway, notification, "/api/notifications/**","HTTP")
+
+' ── Service → DB ──────────────────────────────────────────────────────────────
+Rel(auth,         postgres_auth,  "Reads / Writes", "TCP")
+Rel(listing,      postgres_lst,   "Reads / Writes", "TCP")
+Rel(booking,      postgres_bk,    "Reads / Writes (ACID)", "TCP")
+Rel(payment,      postgres_pay,   "Reads / Writes", "TCP")
+Rel(subscription, postgres_sub,   "Reads / Writes", "TCP")
+Rel(notification, postgres_notif, "Writes log",     "TCP")
+
+' ── Redis interactions ────────────────────────────────────────────────────────
+Rel(search,       redis, "Cache-aside (GET/SET/EX)", "TCP")
+Rel(listing,      redis, "Publish LISTING_* events\n+ slot cache", "TCP")
+Rel(booking,      redis, "Publish BOOKING_* events", "TCP")
+Rel(payment,      redis, "Publish PAYMENT_SUCCESS",  "TCP")
+Rel(notification, redis, "Subscribe to 'events'",    "TCP")
+
+' ── Internal service calls ────────────────────────────────────────────────────
+Rel(listing,  subscription, "GET /plan/:userId\n(X-Internal-Token)", "HTTP")
+Rel(listing,  booking,      "GET booked slots\nfor availability",    "HTTP")
+Rel(payment,  booking,      "POST /internal/bookings/:id/confirm\n(X-Internal-Token)", "HTTP")
+Rel(notification, auth,     "GET user details",    "HTTP")
+Rel(notification, listing,  "GET space details",   "HTTP")
+
+' ── External ─────────────────────────────────────────────────────────────────
+Rel(payment, stripe_ext, "createPaymentIntent\nretrieveIntent", "HTTPS / Stripe SDK")
+Rel(notification, smtp_ext, "sendMail()", "SMTP / Nodemailer")
+
+@enduml

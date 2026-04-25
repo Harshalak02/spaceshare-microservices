@@ -144,6 +144,7 @@ export default function PaymentModal({
       <div className="payment-modal fade" role="dialog" aria-modal="true" aria-label="Complete payment">
         <div className="payment-modal-header">
           <div>
+            <h4>Do not refresh the page</h4>
             <h3>Complete Your Payment {amount ? `(INR ${Number(amount).toFixed(2)})` : ''}</h3>
             <div className={`payment-countdown ${isExpired ? 'expired' : ''}`}>
               Time remaining: {formatCountdown(remainingSeconds)}

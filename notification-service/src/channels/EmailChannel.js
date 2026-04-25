@@ -1,6 +1,14 @@
 const nodemailer = require('nodemailer');
 const BaseChannel = require('./BaseChannel');
 
+/**
+ * EmailChannel — Observer
+ *
+ * Enabled when 'email' appears in the NOTIFICATION_CHANNELS env var
+ * (or when the legacy NOTIFICATION_CHANNEL=email is set).
+ *
+ * Subscribes to ALL event types by default.
+ */
 class EmailChannel extends BaseChannel {
   constructor() {
     super();
@@ -14,6 +22,23 @@ class EmailChannel extends BaseChannel {
       },
     });
     this.fromEmail = process.env.EMAIL_FROM || 'notifications@example.com';
+  }
+
+  /** Subscribe to every event type */
+  get subscribedEvents() {
+    return ['*'];
+  }
+
+  /**
+   * Active when 'email' is listed in NOTIFICATION_CHANNELS,
+   * or the legacy single-channel env var equals 'email'.
+   */
+  isEnabled() {
+    const channels = (process.env.NOTIFICATION_CHANNELS || process.env.NOTIFICATION_CHANNEL || 'console')
+      .toLowerCase()
+      .split(',')
+      .map((c) => c.trim());
+    return channels.includes('email');
   }
 
   async send(to, subject, body) {
